@@ -121,7 +121,8 @@ void render(uint32_t t) {
   if (lowBattery) return fill(scale(0xFF0000, 0.05f + 0.95f * wave(t, 1200)));
 
   switch (curState) {
-    case State::Connecting: return comet(t, 0x0040FF, 1000);
+    case State::Connecting:
+    case State::Loading: return comet(t, 0x0040FF, 1000);
     case State::Setup: return fill(scale(0x0040FF, 0.1f + 0.9f * wave(t, 2000)));
     default: return renderMode(t);
   }

@@ -17,7 +17,8 @@ enum class Mode : uint8_t {
 };
 
 // Stan urządzenia, który może nadpisać tryb (np. konfiguracja Wi-Fi).
-enum class State : uint8_t { Connecting, Setup, Stopped, Playing };
+// Loading = od wybrania stacji (z zapowiedzią numeru) do pierwszych dźwięków strumienia.
+enum class State : uint8_t { Connecting, Setup, Stopped, Loading, Playing };
 
 const char* modeId(Mode m);
 bool modeFromId(const String& id, Mode& out);

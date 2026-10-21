@@ -78,8 +78,13 @@ code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding
 <section data-tab="stacje">
   <div class="card">
     <h2>Lista stacji</h2>
-    <p class="muted">Kolejność na liście to kolejność przełączania przyciskiem Key3.</p>
+    <p class="muted">Numer stacji to jej miejsce na liście; w tej kolejności przełącza Key3.</p>
     <ul id="manage"></ul>
+  </div>
+  <div class="card">
+    <h2>Zapowiedź numeru</h2>
+    <label class="row"><input type="checkbox" id="announce"> Wypowiadaj numer stacji przy starcie i przy zmianie stacji</label>
+    <p class="muted">Nagrania liczebników od 1 do 40 są zapisane w radiu i działają bez internetu.</p>
   </div>
   <div class="card">
     <form id="add">
@@ -111,7 +116,7 @@ code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding
     <table>
       <tr><th>Światło</th><th>Znaczenie</th></tr>
       <tr><td>Tęcza i błyski R-G-B</td><td>Radio właśnie dostało zasilanie.</td></tr>
-      <tr><td>Niebieska kometa</td><td>Łączenie z Wi-Fi.</td></tr>
+      <tr><td>Niebieska kometa</td><td>Łączenie z Wi-Fi albo ładowanie stacji (od zapowiedzi numeru do pierwszych dźwięków). Potem wraca wybrany tryb.</td></tr>
       <tr><td>Niebieski oddech</td><td>Tryb konfiguracji Wi-Fi (hotspot <code>Radio-XXXX</code>).</td></tr>
       <tr><td>Czerwone pulsowanie</td><td>Bateria poniżej 10% (tylko gdy pomiar baterii jest podłączony).</td></tr>
     </table>
@@ -135,6 +140,7 @@ code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding
     <h2>Jak korzystać</h2>
     <ul class="dots">
       <li>Kliknij stację na liście, żeby jej słuchać. Radio pamięta ostatnią stację i głośność, a po włączeniu zasilania samo zaczyna grać.</li>
+      <li>Przy starcie i każdej zmianie stacji radio mówi jej numer z listy, więc przełączając przyciskiem Key3 wiesz, gdzie jesteś. Zapowiedź wyłączysz w zakładce Stacje.</li>
       <li>Strona działa na każdym urządzeniu w tej samej sieci pod adresem <code>http://radio.local</code>. Jeśli adres się nie otwiera, użyj numeru IP z sekcji poniżej albo rozłącz VPN.</li>
       <li>Gdy strumień się urwie, radio po kilku sekundach samo połączy się ponownie.</li>
       <li>Zmiany zrobione przyciskami pojawiają się na stronie po kilku sekundach.</li>
@@ -184,8 +190,9 @@ const play=i=>post('/api/play',{i}).then(status);
 
 function render(){
   const cur=stations[st.station];
-  $('station').textContent=cur?cur.name:'—';
-  $('title').textContent=st.playing?(st.title||''):'Zatrzymane';
+  $('station').textContent=cur?`${st.station+1}. ${cur.name}`:'—';
+  $('title').textContent=!st.playing?'Zatrzymane':st.loading?'Łączenie…':(st.title||'');
+  $('announce').checked=!!st.announce;
   $('toggle').textContent=st.playing?'Stop':'Graj';
   if(document.activeElement!==$('vol')){$('vol').value=st.volume;$('volv').textContent=st.volume}
 
@@ -193,11 +200,11 @@ function render(){
   const m=$('manage');m.innerHTML='';
   stations.forEach((s,i)=>{
     const li=document.createElement('li');if(st.playing&&i===st.station)li.className='on';
-    const n=document.createElement('span');n.className='name';n.textContent=s.name;n.onclick=()=>play(i);
+    const n=document.createElement('span');n.className='name';n.textContent=`${i+1}. ${s.name}`;n.onclick=()=>play(i);
     li.append(n);q.append(li);
 
     const li2=document.createElement('li');
-    const u=document.createElement('div');u.className='url';u.textContent=s.name;
+    const u=document.createElement('div');u.className='url';u.textContent=`${i+1}. ${s.name}`;
     const sm=document.createElement('small');sm.textContent=s.url;u.append(sm);
     const d=document.createElement('button');d.className='del';d.textContent='✕';d.title='Usuń';
     d.onclick=()=>{if(confirm('Usunąć '+s.name+'?'))post('/api/stations/delete',{i}).then(load).then(status)};
@@ -221,6 +228,7 @@ function render(){
 $('toggle').onclick=()=>post(st.playing?'/api/stop':'/api/play',st.playing?{}:{i:Math.max(0,st.station)}).then(status);
 $('prev').onclick=()=>stations.length&&play((st.station-1+stations.length)%stations.length);
 $('next').onclick=()=>stations.length&&play((st.station+1)%stations.length);
+$('announce').onchange=e=>post('/api/announce',{on:e.target.checked?1:0}).then(status);
 $('vol').oninput=e=>$('volv').textContent=e.target.value;
 $('vol').onchange=e=>post('/api/volume',{v:e.target.value}).then(status);
 $('add').onsubmit=e=>{e.preventDefault();post('/api/stations/add',new FormData(e.target)).then(r=>r.json()).then(r=>{

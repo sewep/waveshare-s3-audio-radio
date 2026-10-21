@@ -6,12 +6,16 @@
 //   Key2  graj/stop
 //   Key3  krótko = następna stacja, przytrzymanie = poprzednia
 //   BOOT  krótko = graj/stop, przytrzymanie 3 s = zapomnij Wi-Fi i uruchom konfigurację
+// Przy starcie i zmianie stacji radio wypowiada jej numer (nagrania 1..40 wbudowane w firmware,
+// przy starcie zapisywane na partycję FFat). Od wybrania stacji do pierwszych dźwięków
+// diody pokazują niebieską kometę.
 // Bez zapisanej sieci (albo gdy połączenie się nie uda) radio wystawia hotspot "Radio-XXXX",
 // a konfiguracja Wi-Fi jest pod http://192.168.4.1.
 
 #include <Arduino.h>
 #include <DNSServer.h>
 #include <ESPmDNS.h>
+#include <FFat.h>
 #include <Preferences.h>
 #include <WebServer.h>
 #include <WiFi.h>
@@ -21,6 +25,7 @@
 #include "Audio.h"
 #include "board.h"
 #include "leds.h"
+#include "station_numbers.h"
 #include "web_page.h"
 
 static const char* HOSTNAME = "radio";
@@ -62,6 +67,12 @@ String streamTitle;
 bool apMode = false;
 uint32_t lastStreamOkMs = 0;
 int battery = -1;
+
+bool announceEnabled = true;  // wypowiadanie numeru stacji
+bool numbersReady = false;    // nagrania liczebników są na FFat
+bool announcing = false;      // trwa zapowiedź numeru
+bool streamPending = false;   // zapowiedź skończona, czas połączyć ze strumieniem
+bool loading = false;         // stacja wybrana, ale jeszcze nie gra
 
 // ---------- trwałe ustawienia ----------
 
@@ -107,19 +118,68 @@ void applyLedMode(leds::Mode m) {
 
 // ---------- odtwarzanie ----------
 
-void play(int index) {
+// Nagrania liczebników trafiają na FFat tylko wtedy, gdy zmieniła się ich wersja (CRC).
+void prepareNumberClips() {
+  if (!FFat.begin(true)) {
+    Serial.println("FFat niedostępny – bez zapowiedzi numerów");
+    return;
+  }
+  char crc[12];
+  snprintf(crc, sizeof(crc), "%08lx", (unsigned long)STATION_NUMBER_CLIPS_CRC);
+  File f = FFat.open("/n/crc", "r");
+  bool upToDate = f && f.readString() == crc;
+  if (f) f.close();
+  if (!upToDate) {
+    Serial.println("Zapisuję nagrania numerów stacji na FFat");
+    FFat.mkdir("/n");
+    for (int i = 0; i < STATION_NUMBER_COUNT; i++) {
+      char path[16];
+      snprintf(path, sizeof(path), "/n/%d.ogg", i + 1);
+      File out = FFat.open(path, "w");
+      if (!out || out.write(STATION_NUMBER_CLIPS[i].data, STATION_NUMBER_CLIPS[i].len) != STATION_NUMBER_CLIPS[i].len) {
+        Serial.printf("Błąd zapisu %s\n", path);
+        return;
+      }
+      out.close();
+    }
+    File marker = FFat.open("/n/crc", "w");
+    marker.print(crc);
+    marker.close();
+  }
+  numbersReady = true;
+}
+
+void connectStream() {
+  const Station& s = stations[currentStation];
+  Serial.printf("Gram: %d. %s (%s)\n", currentStation + 1, s.name.c_str(), s.url.c_str());
+  audio.connecttohost(s.url.c_str());
+  lastStreamOkMs = millis();
+}
+
+// announce = false przy ponownym łączeniu po zerwaniu strumienia.
+void startStation(int index, bool announce) {
   if (index < 0 || index >= (int)stations.size()) return;
   currentStation = index;
   playing = true;
+  loading = true;
+  streamPending = false;
   streamTitle = "";
-  Serial.printf("Gram: %s (%s)\n", stations[index].name.c_str(), stations[index].url.c_str());
-  audio.connecttohost(stations[index].url.c_str());
+  announcing = false;
+  if (announce && announceEnabled && numbersReady && index < STATION_NUMBER_COUNT) {
+    char path[16];
+    snprintf(path, sizeof(path), "/n/%d.ogg", index + 1);
+    announcing = audio.connecttoFS(FFat, path);
+  }
+  if (!announcing) connectStream();
   lastStreamOkMs = millis();
   saveState();
 }
 
+void play(int index) { startStation(index, true); }
+
 void stop() {
   playing = false;
+  loading = announcing = streamPending = false;
   streamTitle = "";
   audio.stopSong();
   saveState();
@@ -136,18 +196,31 @@ void audioInfo(Audio::msg_t m) {
     if (m.vec1.size() >= 2) leds::setVuLevel(max(m.vec1[0], m.vec1[1]));
     return;
   }
+  if (m.e == Audio::evt_eof && announcing) {
+    announcing = false;
+    streamPending = true;  // połączenie w loop(), nie wewnątrz callbacku biblioteki
+  }
+  // Pierwsza ramka strumienia zdekodowana = gra; koniec ładowania.
+  bool decoding = m.e == Audio::evt_bitrate ||
+                  (m.e == Audio::evt_info && m.msg && strncmp(m.msg, "SampleRate", 10) == 0);
+  if (decoding && !announcing) loading = false;
   if (m.e == Audio::evt_streamtitle && m.msg) streamTitle = m.msg;
   Serial.printf("%s: %s\n", m.s ? m.s : "", m.msg ? m.msg : "");
 }
 
 // Gdy strumień się urwie, a użytkownik chce słuchać, łączymy ponownie.
 void keepStreamAlive() {
+  if (streamPending) {
+    streamPending = false;
+    if (playing) connectStream();
+    return;
+  }
   if (!playing || apMode) return;
   if (audio.isRunning()) {
     lastStreamOkMs = millis();
   } else if (millis() - lastStreamOkMs > RECONNECT_DELAY_MS) {
     Serial.println("Strumień przerwany, łączę ponownie");
-    play(currentStation);
+    startStation(currentStation, false);
   }
 }
 
@@ -199,7 +272,9 @@ void handleStatus() {
                 ",\"ip\":\"" + WiFi.localIP().toString() + "\"" +
                 ",\"rssi\":" + WiFi.RSSI() +
                 ",\"host\":\"" + HOSTNAME + ".local\"" +
-                ",\"battery\":" + battery + ledJson() + "}";
+                ",\"battery\":" + battery +
+                ",\"loading\":" + (loading ? "true" : "false") +
+                ",\"announce\":" + (announceEnabled ? "true" : "false") + ledJson() + "}";
   server.send(200, "application/json", json);
 }
 
@@ -308,6 +383,11 @@ void setupRoutes() {
     server.on("/api/stations/add", HTTP_POST, handleAddStation);
     server.on("/api/stations/delete", HTTP_POST, handleDeleteStation);
     server.on("/api/led", HTTP_POST, handleLed);
+    server.on("/api/announce", HTTP_POST, [] {
+      announceEnabled = server.arg("on") == "1";
+      prefs.putBool("announce", announceEnabled);
+      sendOk();
+    });
     server.onNotFound([] { server.send(404, "text/plain", "Nie ma takiej strony"); });
   }
   server.begin();
@@ -437,7 +517,8 @@ void handleButtons() {
 
 void updateLeds() {
   if (apMode) leds::setState(leds::State::Setup);
-  else leds::setState(playing ? leds::State::Playing : leds::State::Stopped);
+  else if (!playing) leds::setState(leds::State::Stopped);
+  else leds::setState(loading ? leds::State::Loading : leds::State::Playing);
 
   static uint32_t lastBatteryPoll = 0;
   if (board::BATTERY_ADC_ENABLED && (lastBatteryPoll == 0 || millis() - lastBatteryPoll > BATTERY_POLL_MS)) {
@@ -460,6 +541,7 @@ void setup() {
   currentStation = constrain(prefs.getInt("station", 0), 0, (int)stations.size() - 1);
   volume = prefs.getUChar("volume", 8);
   bool resume = prefs.getBool("playing", true);
+  announceEnabled = prefs.getBool("announce", true);
 
   leds::begin(board::LED_PIN, board::LED_COUNT);  // od razu animacja startowa
   leds::setColor(prefs.getUInt("ledColor", 0xFF6A00));
@@ -473,6 +555,7 @@ void setup() {
   audio.setOutputSampleRate(Audio::SR_48000);  // kodek skonfigurowany na stałe 48 kHz
   audio.setVolume(volume);
   if (!board::begin()) Serial.println("Błąd inicjalizacji kodeka ES8311 – nie będzie dźwięku");
+  prepareNumberClips();
 
   if (connectWifi()) {
     Serial.printf("Połączono, IP: %s\n", WiFi.localIP().toString().c_str());
