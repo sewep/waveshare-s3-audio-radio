@@ -20,6 +20,7 @@
 
 #include "Audio.h"
 #include "board.h"
+#include "leds.h"
 #include "web_page.h"
 
 static const char* HOSTNAME = "radio";
@@ -27,6 +28,7 @@ static const uint32_t WIFI_CONNECT_TIMEOUT_MS = 20000;
 static const uint32_t RECONNECT_DELAY_MS = 5000;
 static const uint32_t WIFI_RESET_PRESS_MS = 3000;
 static const uint32_t KEY_POLL_MS = 20;
+static const uint32_t BATTERY_POLL_MS = 10000;
 static const size_t MAX_STATIONS = 40;
 
 struct Station {
@@ -59,6 +61,7 @@ uint8_t volume = 8;    // 0..21
 String streamTitle;
 bool apMode = false;
 uint32_t lastStreamOkMs = 0;
+int battery = -1;
 
 // ---------- trwałe ustawienia ----------
 
@@ -91,6 +94,17 @@ void saveState() {
   prefs.putUChar("volume", volume);
 }
 
+void saveLeds() {
+  prefs.putUChar("ledMode", (uint8_t)leds::mode());
+  prefs.putUInt("ledColor", leds::color());
+  prefs.putUChar("ledBright", leds::brightness());
+}
+
+void applyLedMode(leds::Mode m) {
+  leds::setMode(m);
+  audio.settings.VU_LEVEL = (m == leds::Mode::Vu);  // poziom liczony tylko, gdy potrzebny
+}
+
 // ---------- odtwarzanie ----------
 
 void play(int index) {
@@ -118,6 +132,10 @@ void setVolume(int v) {
 }
 
 void audioInfo(Audio::msg_t m) {
+  if (m.e == Audio::evt_vu) {  // [lewy, prawy, szczyt L, szczyt P]; za częste, żeby logować
+    if (m.vec1.size() >= 2) leds::setVuLevel(max(m.vec1[0], m.vec1[1]));
+    return;
+  }
   if (m.e == Audio::evt_streamtitle && m.msg) streamTitle = m.msg;
   Serial.printf("%s: %s\n", m.s ? m.s : "", m.msg ? m.msg : "");
 }
@@ -166,6 +184,13 @@ void sendError(const char* msg) {
   server.send(400, "application/json", String("{\"error\":\"") + msg + "\"}");
 }
 
+String ledJson() {
+  char color[8];
+  snprintf(color, sizeof(color), "#%06lx", (unsigned long)leds::color());
+  return String(",\"led\":{\"mode\":\"") + leds::modeId(leds::mode()) + "\",\"color\":\"" + color +
+         "\",\"brightness\":" + leds::brightness() + "}";
+}
+
 void handleStatus() {
   String json = "{\"playing\":" + String(playing ? "true" : "false") +
                 ",\"station\":" + currentStation +
@@ -173,8 +198,26 @@ void handleStatus() {
                 ",\"title\":\"" + jsonEscape(streamTitle) + "\"" +
                 ",\"ip\":\"" + WiFi.localIP().toString() + "\"" +
                 ",\"rssi\":" + WiFi.RSSI() +
-                ",\"host\":\"" + HOSTNAME + ".local\"}";
+                ",\"host\":\"" + HOSTNAME + ".local\"" +
+                ",\"battery\":" + battery + ledJson() + "}";
   server.send(200, "application/json", json);
+}
+
+void handleLed() {
+  if (server.hasArg("mode")) {
+    leds::Mode m;
+    if (!leds::modeFromId(server.arg("mode"), m)) return sendError("nieznany tryb");
+    applyLedMode(m);
+  }
+  if (server.hasArg("color")) {
+    String c = server.arg("color");
+    if (c.startsWith("#")) c.remove(0, 1);
+    if (c.length() != 6) return sendError("kolor w formacie #rrggbb");
+    leds::setColor(strtoul(c.c_str(), nullptr, 16));
+  }
+  if (server.hasArg("brightness")) leds::setBrightness(constrain(server.arg("brightness").toInt(), 0, 255));
+  saveLeds();
+  sendOk();
 }
 
 void handleStations() {
@@ -264,6 +307,7 @@ void setupRoutes() {
     server.on("/api/volume", HTTP_POST, [] { setVolume(server.arg("v").toInt()); sendOk(); });
     server.on("/api/stations/add", HTTP_POST, handleAddStation);
     server.on("/api/stations/delete", HTTP_POST, handleDeleteStation);
+    server.on("/api/led", HTTP_POST, handleLed);
     server.onNotFound([] { server.send(404, "text/plain", "Nie ma takiej strony"); });
   }
   server.begin();
@@ -389,6 +433,20 @@ void handleButtons() {
   }
 }
 
+// ---------- diody ----------
+
+void updateLeds() {
+  if (apMode) leds::setState(leds::State::Setup);
+  else leds::setState(playing ? leds::State::Playing : leds::State::Stopped);
+
+  static uint32_t lastBatteryPoll = 0;
+  if (board::BATTERY_ADC_ENABLED && (lastBatteryPoll == 0 || millis() - lastBatteryPoll > BATTERY_POLL_MS)) {
+    lastBatteryPoll = millis();
+    battery = board::batteryPercent();
+    leds::setBatteryPercent(battery);
+  }
+}
+
 // ---------- start ----------
 
 void setup() {
@@ -402,6 +460,13 @@ void setup() {
   currentStation = constrain(prefs.getInt("station", 0), 0, (int)stations.size() - 1);
   volume = prefs.getUChar("volume", 8);
   bool resume = prefs.getBool("playing", true);
+
+  leds::begin(board::LED_PIN, board::LED_COUNT);  // od razu animacja startowa
+  leds::setColor(prefs.getUInt("ledColor", 0xFF6A00));
+  leds::setBrightness(prefs.getUChar("ledBright", 60));
+  uint8_t ledMode = prefs.getUChar("ledMode", (uint8_t)leds::Mode::Rainbow);
+  applyLedMode(ledMode < (uint8_t)leds::Mode::Count ? (leds::Mode)ledMode : leds::Mode::Rainbow);
+  leds::setState(leds::State::Connecting);
 
   Audio::audio_info_callback = audioInfo;
   audio.setPinout(board::I2S_BCLK, board::I2S_LRCK, board::I2S_DOUT, board::I2S_MCLK);
@@ -429,5 +494,6 @@ void loop() {
   if (apMode) dns.processNextRequest();
   handleButtons();
   keepStreamAlive();
+  updateLeds();
   vTaskDelay(1);
 }

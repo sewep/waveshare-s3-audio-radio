@@ -28,6 +28,9 @@ li:first-child{border-top:none}
 li .name{flex:1;padding:8px 0;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 li.on .name{color:var(--accent);font-weight:600}
 form{display:grid;gap:8px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+.chips button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+input[type=color]{width:44px;height:36px;padding:0;border:1px solid var(--line);border-radius:8px;background:none}
 </style></head><body><main>
 <div class="card">
   <h1>Radio</h1>
@@ -42,6 +45,14 @@ form{display:grid;gap:8px}
   </div>
 </div>
 <div class="card"><ul id="list"></ul></div>
+<div class="card">
+  <strong>Podświetlenie</strong>
+  <div class="chips" id="modes"></div>
+  <div class="row">
+    <span class="muted">Kolor</span><input type="color" id="ledColor">
+    <span class="muted">Jasność</span><input type="range" id="ledBright" min="5" max="255">
+  </div>
+</div>
 <div class="card">
   <form id="add">
     <strong>Dodaj stację</strong>
@@ -63,7 +74,12 @@ function render(){
   $('title').textContent=st.playing?(st.title||''):'Zatrzymane';
   $('toggle').textContent=st.playing?'Stop':'Graj';
   if(document.activeElement!==$('vol')){$('vol').value=st.volume;$('volv').textContent=st.volume}
-  $('net').textContent=st.host?`${st.host} · ${st.ip} · Wi-Fi ${st.rssi} dBm`:'';
+  $('net').textContent=st.host?`${st.host} · ${st.ip} · Wi-Fi ${st.rssi} dBm`+(st.battery>=0?` · bateria ${st.battery}%`:''):'';
+  if(st.led){
+    document.querySelectorAll('#modes button').forEach(b=>b.classList.toggle('on',b.dataset.m===st.led.mode));
+    if(document.activeElement!==$('ledColor'))$('ledColor').value=st.led.color;
+    if(document.activeElement!==$('ledBright'))$('ledBright').value=st.led.brightness;
+  }
   const ul=$('list');ul.innerHTML='';
   stations.forEach((s,i)=>{
     const li=document.createElement('li');if(st.playing&&i===st.station)li.className='on';
@@ -77,6 +93,11 @@ $('toggle').onclick=()=>post(st.playing?'/api/stop':'/api/play',st.playing?{}:{i
 $('vol').oninput=e=>$('volv').textContent=e.target.value;
 $('vol').onchange=e=>post('/api/volume',{v:e.target.value}).then(status);
 $('add').onsubmit=e=>{e.preventDefault();post('/api/stations/add',new FormData(e.target)).then(()=>{e.target.reset();load()})};
+const MODES=[['off','Wyłączone'],['status','Status'],['color','Stały kolor'],['breathe','Oddech'],['rainbow','Tęcza'],['comet','Kometa'],['vu','Wizualizer']];
+MODES.forEach(([m,label])=>{const b=document.createElement('button');b.dataset.m=m;b.textContent=label;
+  b.onclick=()=>post('/api/led',{mode:m}).then(status);$('modes').append(b)});
+$('ledColor').onchange=e=>post('/api/led',{color:e.target.value}).then(status);
+$('ledBright').onchange=e=>post('/api/led',{brightness:e.target.value}).then(status);
 load().then(status);setInterval(status,3000);
 </script></body></html>)HTML";
 

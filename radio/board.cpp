@@ -83,6 +83,22 @@ uint8_t readKeys() {
   return ~in & (KEY1 | KEY2 | KEY3);
 }
 
+int batteryPercent() {
+  if (!BATTERY_ADC_ENABLED) return -1;
+  // Przybliżona krzywa rozładowania ogniwa Li-ion/Li-Po (mV -> %).
+  static const int curve[][2] = {{3300, 0}, {3600, 10}, {3700, 25}, {3800, 50}, {3950, 75}, {4200, 100}};
+  uint32_t mv = 0;
+  for (int i = 0; i < 8; i++) mv += analogReadMilliVolts(BATTERY_ADC_PIN);
+  mv = mv / 8 * 3;  // dzielnik 200k/100k
+  if (mv <= (uint32_t)curve[0][0]) return 0;
+  for (size_t i = 1; i < sizeof(curve) / sizeof(curve[0]); i++) {
+    if (mv <= (uint32_t)curve[i][0]) {
+      return map(mv, curve[i - 1][0], curve[i][0], curve[i - 1][1], curve[i][1]);
+    }
+  }
+  return 100;
+}
+
 bool begin() {
   Wire.begin(I2C_SDA, I2C_SCL, 400000);
   setAmplifier(true);

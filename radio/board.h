@@ -13,6 +13,16 @@ constexpr int I2C_SDA = 11;
 constexpr int I2C_SCL = 10;
 constexpr int BOOT_BUTTON = 0;
 
+// Łańcuch 7 diod WS2812 (na schemacie U9, U19, U14..U10).
+constexpr int LED_PIN = 38;
+constexpr int LED_COUNT = 7;
+
+// Pomiar baterii: dzielnik 200k/100k (ADC widzi 1/3 napięcia) na GPIO1. Fabrycznie NIE jest
+// podłączony — trzeba wlutować zworkę 0R przy GPIO1 (BAT_ADC), a kamera przestaje wtedy działać.
+// Po przelutowaniu ustaw na true.
+constexpr bool BATTERY_ADC_ENABLED = false;
+constexpr int BATTERY_ADC_PIN = 1;
+
 // Przyciski użytkownika na ekspanderze TCA9555 (port 1), aktywne stanem niskim.
 // Na schemacie: Key1 = Extend_IO10, Key2 = Extend_IO11, Key3 = Extend_IO12.
 constexpr uint8_t KEY1 = 0x02;
@@ -28,5 +38,8 @@ void setAmplifier(bool on);
 
 // Maska wciśniętych przycisków KEY1..KEY3 (bit ustawiony = wciśnięty).
 uint8_t readKeys();
+
+// Poziom naładowania 0..100 albo -1, gdy pomiar baterii jest niedostępny.
+int batteryPercent();
 
 }  // namespace board
