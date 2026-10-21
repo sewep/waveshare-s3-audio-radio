@@ -155,7 +155,8 @@ bool modeFromId(const String& id, Mode& out) {
 
 void begin(int pin, int count) {
   ledCount = count;
-  strip = new Adafruit_NeoPixel(count, pin, NEO_GRB + NEO_KHZ800);
+  // Diody na tej płytce przyjmują kolory w kolejności RGB (z NEO_GRB czerwony i zielony były zamienione).
+  strip = new Adafruit_NeoPixel(count, pin, NEO_RGB + NEO_KHZ800);
   strip->begin();
   strip->clear();
   strip->show();

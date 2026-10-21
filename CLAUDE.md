@@ -37,7 +37,7 @@ Kolejka zaplanowanych projektów: [docs/projekty.md](docs/projekty.md).
   - plik włączony zaraz po przerwaniu strumienia w trakcie buforowania potrafi się zawiesić — przed `connecttoFS` jest `stopSong()`, a w `loop()` strażnik: brak „stream ready” po 1,5 s = ponowienie, potem pominięcie zapowiedzi.
 - Wszystkie wywołania biblioteki audio idą z osobnego zadania (`audioTask`, rdzeń 1, ten sam priorytet co `loop()`), sterowanego kolejką `AudioMsg`. `connecttohost` blokuje na DNS i SSL (1–3 s), a wyższy priorytet zagładzał stronę WWW przez ~0,6 s liczenia SSL.
 - Przyciski Key1–Key3 (schemat: Extend_IO10–12) to wejścia TCA9555 port 1, bity 1–3, aktywne stanem niskim (podciąganie 10 kΩ). Extend_IOn ze schematu = pin n−1 ekspandera, więc PA_CTRL (Extend_IO9) = EXIO8 z kodu xiaozhi.
-- Diody: 7× WS2812 w jednym łańcuchu na GPIO38 (xiaozhi zakłada 6). Animacje w osobnym zadaniu FreeRTOS (`radio/leds.cpp`), więc działają, gdy `setup()` czeka na Wi-Fi.
+- Diody: 7× WS2812 w jednym łańcuchu na GPIO38 (xiaozhi zakłada 6), kolejność kolorów RGB (`NEO_RGB`, nie typowe dla WS2812 `NEO_GRB`). Animacje w osobnym zadaniu FreeRTOS (`radio/leds.cpp`), więc działają, gdy `setup()` czeka na Wi-Fi.
 - Bateria: dzielnik 200k/100k (ADC = ⅓ napięcia) na BAT_ADC, fabrycznie niepodłączony z GPIO1 — trzeba wlutować zworkę 0R, a kamera przestaje działać. Ładowarka ETA6098 sygnalizuje stan tylko diodą, ESP32 go nie widzi.
 - W rdzeniu 3.x `WiFi.macAddress()` tuż po `WiFi.mode()` zwraca zera — MAC czytaj przez `esp_read_mac()`.
 
