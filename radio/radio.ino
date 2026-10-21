@@ -171,7 +171,7 @@ void setLedsDarkWhilePlaying(bool on) {
 
 void applyLedMode(leds::Mode m) {
   leds::setMode(m);
-  audio.settings.VU_LEVEL = (m == leds::Mode::Vu);  // poziom liczony tylko, gdy potrzebny
+  audio.settings.VU_LEVEL = leds::usesMusic(m);  // poziom liczony tylko, gdy potrzebny
 }
 
 // ---------- odtwarzanie ----------

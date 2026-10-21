@@ -122,7 +122,7 @@ code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding
       <span class="muted">Kolor</span><input type="color" id="ledColor">
       <span class="muted">Jasność</span><input type="range" id="ledBright" min="5" max="255">
     </div>
-    <p class="muted">Kolor dotyczy trybów Stały kolor, Oddech i Kometa. Jasność dotyczy wszystkich trybów.</p>
+    <p class="muted">Kolor dotyczy trybów Stały kolor, Oddech, Kometa, Fala i Iskry. Jasność dotyczy wszystkich trybów.</p>
   </div>
   <div class="card">
     <h2>Sygnały specjalne</h2>
@@ -188,7 +188,14 @@ const MODES=[
   ['breathe','Oddech','Wybrany kolor powoli rozjaśnia się i przygasa.'],
   ['rainbow','Tęcza','Kolory tęczy krążą po pierścieniu.'],
   ['comet','Kometa','Świetlny punkt z ogonem krąży w wybranym kolorze.'],
-  ['vu','Wizualizer','Diody zapalają się w rytm muzyki, od zielonej do czerwonej.']];
+  ['vu','Wizualizer','Diody zapalają się w rytm muzyki, od zielonej do czerwonej.'],
+  ['pulse','Puls','Cały pierścień błyska na każde uderzenie, za każdym razem innym kolorem.'],
+  ['disco','Disco','Na każde uderzenie diody losują nowe kolory; jasność idzie za głośnością.'],
+  ['rcomet','Tęczowa kometa','Kometa z długim ogonem, która płynnie zmienia kolor.'],
+  ['wave','Fala','Fala światła w wybranym kolorze krąży po pierścieniu.'],
+  ['sparkle','Iskry','Losowe diody rozbłyskują wybranym kolorem na przygaszonym tle.'],
+  ['fire','Ogień','Migoczące płomienie, od czerwieni do żółci.'],
+  ['police','Policja','Naprzemienne podwójne błyski: czerwone z jednej strony, niebieskie z drugiej.']];
 
 function showTab(){
   let id=(location.hash||'#radio').slice(1);

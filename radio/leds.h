@@ -13,6 +13,14 @@ enum class Mode : uint8_t {
   Rainbow,  // obracająca się tęcza
   Comet,    // kometa krążąca w wybranym kolorze
   Vu,       // wizualizer głośności muzyki
+  // Nowe tryby tylko na końcu: numer trybu jest zapisany w pamięci (Preferences).
+  Fire,          // migotanie płomienia
+  Sparkle,       // iskry w wybranym kolorze na przygaszonym tle
+  Police,        // naprzemienne czerwone i niebieskie błyski
+  RainbowComet,  // kometa zmieniająca kolor
+  Wave,          // fala jasności krążąca w wybranym kolorze
+  Pulse,         // błysk całego pierścienia na każde uderzenie, co uderzenie inny kolor
+  Disco,         // na każde uderzenie diody losują nowe kolory
   Count
 };
 
@@ -22,6 +30,7 @@ enum class Mode : uint8_t {
 enum class State : uint8_t { Connecting, Setup, Stopped, Loading, Trouble, Playing };
 
 const char* modeId(Mode m);
+bool usesMusic(Mode m);  // tryb potrzebuje poziomu głośności z biblioteki audio
 bool modeFromId(const String& id, Mode& out);
 
 // Startuje zadanie animacji; od razu leci animacja startowa.
