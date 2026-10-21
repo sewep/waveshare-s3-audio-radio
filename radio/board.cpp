@@ -6,6 +6,7 @@ namespace board {
 namespace {
 
 constexpr uint8_t TCA9555_ADDR = 0x20;
+constexpr uint8_t TCA9555_INPUT_PORT1 = 0x01;
 constexpr uint8_t TCA9555_OUTPUT_PORT1 = 0x03;
 constexpr uint8_t TCA9555_CONFIG_PORT1 = 0x07;
 constexpr uint8_t AMP_ENABLE_BIT = 0x01;  // EXIO8 = port 1, bit 0
@@ -74,6 +75,12 @@ void setAmplifier(bool on) {
   out = on ? (out | AMP_ENABLE_BIT) : (out & ~AMP_ENABLE_BIT);
   writeReg(TCA9555_ADDR, TCA9555_OUTPUT_PORT1, out);
   writeReg(TCA9555_ADDR, TCA9555_CONFIG_PORT1, cfg & ~AMP_ENABLE_BIT);  // 0 = wyjście
+}
+
+uint8_t readKeys() {
+  int in = readReg(TCA9555_ADDR, TCA9555_INPUT_PORT1);
+  if (in < 0) return 0;
+  return ~in & (KEY1 | KEY2 | KEY3);
 }
 
 bool begin() {

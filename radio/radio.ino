@@ -1,7 +1,11 @@
 // Radio internetowe na Waveshare ESP32-S3-AUDIO-Board.
 // Sterowanie przez przeglądarkę: http://radio.local
 //
-// Przycisk BOOT: krótko = graj/stop, przytrzymanie 3 s = zapomnij Wi-Fi i uruchom konfigurację.
+// Przyciski:
+//   Key1  krótko = głośniej, przytrzymanie = ściszanie (powtarza, dopóki trzymasz)
+//   Key2  graj/stop
+//   Key3  krótko = następna stacja, przytrzymanie = poprzednia
+//   BOOT  krótko = graj/stop, przytrzymanie 3 s = zapomnij Wi-Fi i uruchom konfigurację
 // Bez zapisanej sieci (albo gdy połączenie się nie uda) radio wystawia hotspot "Radio-XXXX",
 // a konfiguracja Wi-Fi jest pod http://192.168.4.1.
 
@@ -21,7 +25,8 @@
 static const char* HOSTNAME = "radio";
 static const uint32_t WIFI_CONNECT_TIMEOUT_MS = 20000;
 static const uint32_t RECONNECT_DELAY_MS = 5000;
-static const uint32_t LONG_PRESS_MS = 3000;
+static const uint32_t WIFI_RESET_PRESS_MS = 3000;
+static const uint32_t KEY_POLL_MS = 20;
 static const size_t MAX_STATIONS = 40;
 
 struct Station {
@@ -298,29 +303,90 @@ void startAccessPoint() {
                 WiFi.softAPIP().toString().c_str());
 }
 
-// ---------- przycisk BOOT ----------
+// ---------- przyciski ----------
 
-void handleButton() {
-  static bool wasPressed = false;
-  static uint32_t pressedAt = 0;
-  static bool longHandled = false;
-  bool pressed = digitalRead(board::BOOT_BUTTON) == LOW;
+enum class ButtonEvent { None, Click, LongPress, Repeat };
+
+// Rozpoznaje krótkie kliknięcie (po puszczeniu), przytrzymanie i opcjonalne powtarzanie.
+struct Button {
+  uint32_t longPressMs;
+  uint32_t repeatMs;  // 0 = bez powtarzania
+  bool wasPressed = false;
+  bool longFired = false;
+  uint32_t pressedAt = 0;
+  uint32_t lastRepeatAt = 0;
+
+  Button(uint32_t longMs, uint32_t repMs = 0) : longPressMs(longMs), repeatMs(repMs) {}
+
+  ButtonEvent update(bool pressed, uint32_t now) {
+    ButtonEvent ev = ButtonEvent::None;
+    if (pressed && !wasPressed) {
+      pressedAt = now;
+      longFired = false;
+    } else if (pressed && !longFired && now - pressedAt >= longPressMs) {
+      longFired = true;
+      lastRepeatAt = now;
+      ev = ButtonEvent::LongPress;
+    } else if (pressed && longFired && repeatMs && now - lastRepeatAt >= repeatMs) {
+      lastRepeatAt = now;
+      ev = ButtonEvent::Repeat;
+    } else if (!pressed && wasPressed && !longFired && now - pressedAt > 30) {
+      ev = ButtonEvent::Click;
+    }
+    wasPressed = pressed;
+    return ev;
+  }
+};
+
+Button bootButton(WIFI_RESET_PRESS_MS);
+Button key1(500, 200);
+Button key2(1000);
+Button key3(800);
+
+void togglePlay() { playing ? stop() : play(currentStation); }
+
+void changeVolume(int delta) {
+  setVolume(volume + delta);
+  Serial.printf("Głośność: %u\n", volume);
+}
+
+void switchStation(int delta) {
+  int n = stations.size();
+  if (n == 0) return;
+  play((currentStation + delta + n) % n);
+}
+
+void handleButtons() {
   uint32_t now = millis();
 
-  if (pressed && !wasPressed) {
-    pressedAt = now;
-    longHandled = false;
-  } else if (pressed && !longHandled && now - pressedAt > LONG_PRESS_MS) {
-    longHandled = true;
+  ButtonEvent boot = bootButton.update(digitalRead(board::BOOT_BUTTON) == LOW, now);
+  if (boot == ButtonEvent::LongPress) {
     Serial.println("Zapominam Wi-Fi i uruchamiam konfigurację");
     prefs.remove("ssid");
     prefs.remove("pass");
     delay(200);
     ESP.restart();
-  } else if (!pressed && wasPressed && !longHandled && now - pressedAt > 30) {
-    if (!apMode) playing ? stop() : play(currentStation);
   }
-  wasPressed = pressed;
+  if (apMode) return;
+  if (boot == ButtonEvent::Click) togglePlay();
+
+  static uint32_t lastPoll = 0;
+  if (now - lastPoll < KEY_POLL_MS) return;
+  lastPoll = now;
+  uint8_t keys = board::readKeys();
+
+  switch (key1.update(keys & board::KEY1, now)) {
+    case ButtonEvent::Click: changeVolume(+1); break;
+    case ButtonEvent::LongPress:
+    case ButtonEvent::Repeat: changeVolume(-1); break;
+    default: break;
+  }
+  if (key2.update(keys & board::KEY2, now) == ButtonEvent::Click) togglePlay();
+  switch (key3.update(keys & board::KEY3, now)) {
+    case ButtonEvent::Click: switchStation(+1); break;
+    case ButtonEvent::LongPress: switchStation(-1); break;
+    default: break;
+  }
 }
 
 // ---------- start ----------
@@ -361,7 +427,7 @@ void loop() {
   audio.loop();
   server.handleClient();
   if (apMode) dns.processNextRequest();
-  handleButton();
+  handleButtons();
   keepStreamAlive();
   vTaskDelay(1);
 }

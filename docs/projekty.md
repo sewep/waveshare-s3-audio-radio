@@ -6,7 +6,7 @@ Kolejka pomysłów na płytkę. Przed wgraniem czegokolwiek: kopia fabryczna jes
 
 Kod: [radio/](../radio/) (Arduino, ESP32-audioI2S 4.0.0, rdzeń esp32 3.3.12).
 
-- Zrobione: odtwarzanie MP3/AAC na ES8311, strona WWW pod `http://radio.local` (graj/stop, głośność, lista stacji z dodawaniem i usuwaniem), konfiguracja Wi-Fi przez hotspot `Radio-XXXX`, pamięć ostatniej stacji i głośności, ponowne łączenie po zerwaniu strumienia, przycisk BOOT.
+- Zrobione: odtwarzanie MP3/AAC na ES8311, strona WWW pod `http://radio.local` (graj/stop, głośność, lista stacji z dodawaniem i usuwaniem), konfiguracja Wi-Fi przez hotspot `Radio-XXXX`, pamięć ostatniej stacji i głośności, ponowne łączenie po zerwaniu strumienia, przyciski: Key1 głośniej (przytrzymanie = ściszanie), Key2 graj/stop, Key3 następna stacja (przytrzymanie = poprzednia), BOOT graj/stop i reset Wi-Fi (3 s).
 - Sprawdzone na sprzęcie: konfiguracja Wi-Fi przez hotspot, dźwięk z głośnika, strona pod `radio.local`.
 - Pomysły na dalej: rezerwacja DHCP na routerze, płytka czyta swój adres głosem po starcie, kolory pierścienia LED (GPIO38, 6 diod WS2812) zależnie od stanu, sortowanie stacji.
 

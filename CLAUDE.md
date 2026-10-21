@@ -30,6 +30,7 @@ Kolejka zaplanowanych projektów: [docs/projekty.md](docs/projekty.md).
 - Szkic w [radio/](radio/), profil `audio-board` w `radio/sketch.yaml` przypina rdzeń esp32 3.3.12 i ESP32-audioI2S 4.0.0 oraz port COM8.
 - Budowanie i wgrywanie: `arduino-cli compile --profile audio-board radio`, `arduino-cli upload --profile audio-board radio` (arduino-cli w `C:\Program Files\Arduino CLI`). Arduino nie ma problemu ze spacją w ścieżce.
 - Sprzęt audio: wzmacniacz głośnika włącza bit 0 portu 1 ekspandera TCA9555 (I2C 0x20, EXIO8); ES8311 (0x18) jako slave z MCLK z GPIO12. Biblioteka audio wysyła stale 48 kHz (`setOutputSampleRate(SR_48000)`), więc kodek konfiguruje się raz na MCLK = 256·fs.
+- Przyciski Key1–Key3 (schemat: Extend_IO10–12) to wejścia TCA9555 port 1, bity 1–3, aktywne stanem niskim (podciąganie 10 kΩ). Extend_IOn ze schematu = pin n−1 ekspandera, więc PA_CTRL (Extend_IO9) = EXIO8 z kodu xiaozhi.
 - W rdzeniu 3.x `WiFi.macAddress()` tuż po `WiFi.mode()` zwraca zera — MAC czytaj przez `esp_read_mac()`.
 
 ## Narzędzia i pułapki
