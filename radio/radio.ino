@@ -493,7 +493,14 @@ void handleSaveWifi() {
   ESP.restart();
 }
 
+void sendFavicon() {
+  server.sendHeader("Cache-Control", "max-age=604800");  // tydzień; przeglądarka nie pyta co chwilę
+  server.send_P(200, "image/svg+xml", FAVICON_SVG);
+}
+
 void setupRoutes() {
+  server.on("/favicon.svg", HTTP_GET, sendFavicon);
+  server.on("/favicon.ico", HTTP_GET, sendFavicon);
   if (apMode) {
     server.on("/", HTTP_GET, [] { server.send_P(200, "text/html; charset=utf-8", SETUP_HTML); });
     server.on("/api/scan", HTTP_GET, handleScan);

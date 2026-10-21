@@ -1,5 +1,9 @@
 #pragma once
 
+// Ikona strony: stare radio z anteną w kolorze akcentu panelu. Serwowana jako /favicon.svg
+// i /favicon.ico (przeglądarki pytają o ten adres same z siebie).
+static const char FAVICON_SVG[] PROGMEM = R"SVG(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#2563eb"/><path d="M22 23 44 11" stroke="#fff" stroke-width="4" stroke-linecap="round"/><rect x="10" y="23" width="44" height="31" rx="7" fill="#fff"/><circle cx="24" cy="38.5" r="8" fill="#2563eb"/><circle cx="24" cy="38.5" r="3" fill="#fff"/><rect x="37" y="31" width="11" height="4" rx="2" fill="#2563eb"/><rect x="37" y="37" width="11" height="4" rx="2" fill="#2563eb"/><rect x="37" y="43" width="11" height="4" rx="2" fill="#2563eb"/></svg>)SVG";
+
 // Strona sterowania radiem (tryb normalny). Zakładki: Radio, Stacje, Podświetlenie, Pomoc;
 // aktywna zakładka jest w adresie (#radio, #stacje, #swiatlo, #pomoc). Sekcje mają data-tab,
 // a nie id, żeby przeglądarka nie przewijała do nich pod przyklejony pasek zakładek.
@@ -7,6 +11,8 @@ static const char INDEX_HTML[] PROGMEM = R"HTML(<!doctype html>
 <html lang="pl"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Radio</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#2563eb">
 <style>
 :root{--bg:#f4f5f7;--card:#fff;--fg:#1d2330;--muted:#6b7280;--accent:#2563eb;--line:#e5e7eb;--danger:#dc2626}
 @media (prefers-color-scheme:dark){:root{--bg:#111318;--card:#1b1e25;--fg:#e8eaf0;--muted:#9aa1ad;--accent:#60a5fa;--line:#2b2f38;--danger:#f87171}}
@@ -251,6 +257,8 @@ static const char SETUP_HTML[] PROGMEM = R"HTML(<!doctype html>
 <html lang="pl"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Radio – Wi-Fi</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#2563eb">
 <style>
 body{margin:0;background:#f4f5f7;color:#1d2330;font:16px/1.4 system-ui,sans-serif}
 main{max-width:420px;margin:0 auto;padding:16px}
