@@ -32,6 +32,8 @@ static const char* HOSTNAME = "radio";
 static const uint32_t WIFI_CONNECT_TIMEOUT_MS = 20000;
 static const uint32_t RECONNECT_DELAY_MS = 5000;
 static const uint32_t ANNOUNCE_STALL_MS = 1500;
+static const uint32_t LOADING_SLOW_MS = 8000;      // dłuższe ładowanie = kłopot (pomarańczowa kometa)
+static const uint32_t SLOW_STREAM_SHOW_MS = 3000;  // „slow stream” przychodzi co 2 s, póki bufor pusty
 static const uint32_t WIFI_RESET_PRESS_MS = 3000;
 static const uint32_t KEY_POLL_MS = 20;
 static const uint32_t BATTERY_POLL_MS = 10000;
@@ -84,6 +86,9 @@ bool numbersReady = false;    // nagrania liczebników są na FFat
 volatile bool announcing = false;     // trwa zapowiedź numeru
 volatile bool streamPending = false;  // zapowiedź skończona, czas połączyć ze strumieniem
 volatile bool loading = false;        // stacja wybrana, ale jeszcze nie gra
+volatile bool streamTrouble = false;  // obecne ładowanie idzie z kłopotami
+volatile uint32_t slowStreamMs = 0;   // ostatnie „slow stream” z biblioteki (bufor pusty od 2 s)
+uint32_t loadingStartMs = 0;
 volatile bool audioRunning = false;   // biblioteka coś odtwarza
 volatile bool audioBusy = false;      // zadanie audio wykonuje polecenie (np. łączy się ze stacją)
 char announceFile[16] = "";           // nazwa pliku bieżącej zapowiedzi, np. "3.mp3"
@@ -278,6 +283,8 @@ void startStation(int index, bool announce) {
   currentStation = index;
   playing = true;
   loading = true;
+  loadingStartMs = millis();
+  streamTrouble = false;
   streamPending = false;
   setTitle("");
   announcing = announce && announceEnabled && numbersReady && index < STATION_NUMBER_COUNT;
@@ -324,6 +331,12 @@ void audioInfo(Audio::msg_t m) {
   bool decoding = m.e == Audio::evt_bitrate ||
                   (m.e == Audio::evt_info && m.msg && strncmp(m.msg, "SampleRate", 10) == 0);
   if (decoding && !announcing) loading = false;
+  if (m.e == Audio::evt_info && m.msg && strcmp(m.msg, "slow stream") == 0) slowStreamMs = millis();
+  // Biblioteka sama łączy się ponownie; do pierwszej ramki to znów ładowanie, tyle że z kłopotem.
+  if (m.e == Audio::evt_info && m.msg && strcmp(m.msg, "Stream lost") == 0) {
+    loading = true;
+    streamTrouble = true;
+  }
   if (m.e == Audio::evt_streamtitle && m.msg) setTitle(m.msg);
   Serial.printf("%s: %s\n", m.s ? m.s : "", m.msg ? m.msg : "");
 }
@@ -346,6 +359,7 @@ void keepStreamAlive() {
     if (!announceRetried) {
       Serial.println("Zapowiedź nie ruszyła, ponawiam");
       announceRetried = true;
+      streamTrouble = true;
       sendAnnounce();
     } else {
       Serial.println("Zapowiedź nie ruszyła, pomijam");
@@ -360,6 +374,7 @@ void keepStreamAlive() {
   } else if (millis() - lastStreamOkMs > RECONNECT_DELAY_MS) {
     Serial.println("Strumień przerwany, łączę ponownie");
     startStation(currentStation, false);
+    streamTrouble = true;
   }
 }
 
@@ -680,7 +695,13 @@ void handleButtons() {
 void updateLeds() {
   if (apMode) leds::setState(leds::State::Setup);
   else if (!playing) leds::setState(leds::State::Stopped);
-  else leds::setState(loading ? leds::State::Loading : leds::State::Playing);
+  else {
+    if (loading && millis() - loadingStartMs > LOADING_SLOW_MS) streamTrouble = true;
+    bool starving = slowStreamMs && millis() - slowStreamMs < SLOW_STREAM_SHOW_MS;
+    leds::setState((loading && streamTrouble) || starving ? leds::State::Trouble
+                   : loading                              ? leds::State::Loading
+                                                          : leds::State::Playing);
+  }
 
   static uint32_t lastBatteryPoll = 0;
   if (board::BATTERY_ADC_ENABLED && (lastBatteryPoll == 0 || millis() - lastBatteryPoll > BATTERY_POLL_MS)) {
@@ -694,6 +715,9 @@ void updateLeds() {
 
 void setup() {
   Serial.begin(115200);
+  // Kabel w komputerze, ale nikt nie czyta portu: domyślnie każdy zapis czeka do 2 s, co
+  // wstrzymywało zadanie audio (strumień nie ruszał). Bez czekania nadmiar logów przepada.
+  Serial.setTxTimeoutMs(0);
   delay(300);
   Serial.println("\n=== Radio internetowe ===");
   pinMode(board::BOOT_BUTTON, INPUT_PULLUP);

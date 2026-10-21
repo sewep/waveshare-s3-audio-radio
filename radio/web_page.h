@@ -130,6 +130,7 @@ code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding
       <tr><th>Światło</th><th>Znaczenie</th></tr>
       <tr><td>Tęcza i błyski R-G-B</td><td>Radio właśnie dostało zasilanie.</td></tr>
       <tr><td>Niebieska kometa</td><td>Łączenie z Wi-Fi albo ładowanie stacji (od zapowiedzi numeru do pierwszych dźwięków). Potem wraca wybrany tryb.</td></tr>
+      <tr><td>Pomarańczowa kometa</td><td>Kłopot ze strumieniem: ładowanie trwa ponad 8 s, strumień się urwał i radio łączy ponownie albo bufor się opróżnił i muzyka się przerywa.</td></tr>
       <tr><td>Niebieski oddech</td><td>Tryb konfiguracji Wi-Fi (hotspot <code>Radio-XXXX</code>).</td></tr>
       <tr><td>Czerwone pulsowanie</td><td>Bateria poniżej 10% (tylko gdy pomiar baterii jest podłączony).</td></tr>
     </table>

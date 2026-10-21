@@ -124,6 +124,7 @@ void render(uint32_t t) {
   switch (curState) {
     case State::Connecting:
     case State::Loading: return comet(t, 0x0040FF, 1000);
+    case State::Trouble: return comet(t, 0xFF5000, 1000);
     case State::Setup: return fill(scale(0x0040FF, 0.1f + 0.9f * wave(t, 2000)));
     case State::Playing: return darkPlaying ? fill(0) : renderMode(t);
     default: return renderMode(t);

@@ -10,7 +10,7 @@ Kod: [radio/](../radio/) (Arduino, ESP32-audioI2S 4.0.0, rdzeń esp32 3.3.12).
 - Zapowiedź numeru stacji (1–40) przy starcie i zmianie stacji, offline: nagrania MP3 z lokalnej syntezy Piper (głos pl_PL-gosia-medium) wbudowane w firmware, przełącznik w zakładce Stacje.
 - Odtwarzanie w osobnym zadaniu FreeRTOS: strona i przyciski odpowiadają także podczas łączenia ze stacją (test 2026-10-21: 95/95 zapytań, maks. 389 ms przy przełączaniu stacji co 4 s; wcześniej przerwy po 3 s). Od wybrania stacji do pierwszych dźwięków diody pokazują niebieską kometę.
 - Sprawdzone na sprzęcie: konfiguracja Wi-Fi przez hotspot, dźwięk z głośnika, strona pod `radio.local`.
-- Diody (7× WS2812 na GPIO38): animacja tęczy i błyski R-G-B po włączeniu zasilania; tryby wybierane na stronie: wyłączone, status, stały kolor, oddech, tęcza, kometa, wizualizer muzyki; kolor i jasność. Niebieska kometa = łączenie z Wi-Fi, niebieski oddech = tryb konfiguracji.
+- Diody (7× WS2812 na GPIO38): animacja tęczy i błyski R-G-B po włączeniu zasilania; tryby wybierane na stronie: wyłączone, status, stały kolor, oddech, tęcza, kometa, wizualizer muzyki; kolor i jasność. Niebieska kometa = łączenie z Wi-Fi, niebieski oddech = tryb konfiguracji, pomarańczowa kometa = kłopot ze strumieniem (ładowanie > 8 s, ponowne łączenie, „slow stream”/„Stream lost” z biblioteki).
 - Bateria: czerwone pulsowanie poniżej 10% jest w kodzie, ale wyłączone (`BATTERY_ADC_ENABLED` w `board.h`) — płytka fabrycznie nie mierzy napięcia baterii; wymaga wlutowania zworki 0R przy GPIO1, co wyłącza kamerę.
 - Pomysły na dalej: rezerwacja DHCP na routerze, płytka czyta swój adres głosem po starcie, sortowanie stacji.
 
