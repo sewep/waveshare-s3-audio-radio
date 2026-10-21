@@ -1,0 +1,15 @@
+# arduino-cli: wersje rdzenia i bibliotek przypięte w profilu, żeby build był powtarzalny.
+#   arduino-cli compile --profile audio-board radio
+#   arduino-cli upload  --profile audio-board radio
+profiles:
+  audio-board:
+    notes: Waveshare ESP32-S3-AUDIO-Board (ESP32-S3R8, 16 MB flash, 8 MB OPI PSRAM)
+    fqbn: esp32:esp32:esp32s3:FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,PSRAM=opi,FlashMode=qio,USBMode=hwcdc,CDCOnBoot=cdc,UploadSpeed=921600
+    platforms:
+      - platform: esp32:esp32 (3.3.12)
+        platform_index_url: https://espressif.github.io/arduino-esp32/package_esp32_index.json
+    libraries:
+      - ESP32-audioI2S-master (4.0.0)
+
+default_profile: audio-board
+default_port: COM8

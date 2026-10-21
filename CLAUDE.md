@@ -2,6 +2,8 @@
 
 Repozytorium na własne projekty na płytce Waveshare ESP32-S3-AUDIO-Board (SKU 32184, „AI Smart Speaker”).
 
+Kolejka zaplanowanych projektów: [docs/projekty.md](docs/projekty.md).
+
 ## Płytka
 
 - ESP32-S3R8 (QFN56, rev v0.2), 240 MHz dual core, 8 MB PSRAM (AP 3.3 V), 16 MB flash QIO.
@@ -22,6 +24,13 @@ Repozytorium na własne projekty na płytce Waveshare ESP32-S3-AUDIO-Board (SKU 
 - Budowanie: `.\scripts\build-xiaozhi.ps1` (domyślnie `pl-PL`, `-Language en-US` itd., `-Flash` od razu wgrywa). Wynik: `firmware/xiaozhi-<wersja>-<język>-esp32-s3-audio-board.bin` — pełny obraz od `0x0` z partycją assets.
 - **ESP-IDF nie działa ze spacją w ścieżce** („Smart spiker”): `esp_audio_codec` i `esp_image_effects` podają linkerowi `-L <ścieżka>` bez cudzysłowów. `subst` i junction nie pomagają, bo `idf.py` i `build.py` robią `realpath`. Dlatego skrypt kopiuje źródła robocopy `/MIR` do `C:\esp\work\xiaozhi-esp32` i buduje tam. Zmiany w kodzie rób w podkatalogu `xiaozhi-esp32/`, nie w kopii roboczej.
 - Język interfejsu i komunikatów głosowych jest wkompilowany (`CONFIG_LANGUAGE_*`); język rozmowy ustawia się na serwerze xiaozhi.me. Słowo wybudzające: domyślne „Nǐ hǎo Xiǎozhì” (`wn9_nihaoxiaozhi_tts`), inne modele: `python scripts/build.py --list-wake-words`.
+
+## Radio (Arduino)
+
+- Szkic w [radio/](radio/), profil `audio-board` w `radio/sketch.yaml` przypina rdzeń esp32 3.3.12 i ESP32-audioI2S 4.0.0 oraz port COM8.
+- Budowanie i wgrywanie: `arduino-cli compile --profile audio-board radio`, `arduino-cli upload --profile audio-board radio` (arduino-cli w `C:\Program Files\Arduino CLI`). Arduino nie ma problemu ze spacją w ścieżce.
+- Sprzęt audio: wzmacniacz głośnika włącza bit 0 portu 1 ekspandera TCA9555 (I2C 0x20, EXIO8); ES8311 (0x18) jako slave z MCLK z GPIO12. Biblioteka audio wysyła stale 48 kHz (`setOutputSampleRate(SR_48000)`), więc kodek konfiguruje się raz na MCLK = 256·fs.
+- W rdzeniu 3.x `WiFi.macAddress()` tuż po `WiFi.mode()` zwraca zera — MAC czytaj przez `esp_read_mac()`.
 
 ## Narzędzia i pułapki
 
