@@ -31,6 +31,7 @@
 static const char* HOSTNAME = "radio";
 static const uint32_t WIFI_CONNECT_TIMEOUT_MS = 20000;
 static const uint32_t RECONNECT_DELAY_MS = 5000;
+static const uint32_t ANNOUNCE_STALL_MS = 1500;
 static const uint32_t WIFI_RESET_PRESS_MS = 3000;
 static const uint32_t KEY_POLL_MS = 20;
 static const uint32_t BATTERY_POLL_MS = 10000;
@@ -63,16 +64,51 @@ std::vector<Station> stations;
 int currentStation = 0;
 bool playing = false;  // stan zamierzony przez użytkownika
 uint8_t volume = 8;    // 0..21
-String streamTitle;
 bool apMode = false;
 uint32_t lastStreamOkMs = 0;
 int battery = -1;
 
 bool announceEnabled = true;  // wypowiadanie numeru stacji
 bool numbersReady = false;    // nagrania liczebników są na FFat
-bool announcing = false;      // trwa zapowiedź numeru
-bool streamPending = false;   // zapowiedź skończona, czas połączyć ze strumieniem
-bool loading = false;         // stacja wybrana, ale jeszcze nie gra
+
+// Flagi wspólne dla loop() i zadania audio.
+volatile bool announcing = false;     // trwa zapowiedź numeru
+volatile bool streamPending = false;  // zapowiedź skończona, czas połączyć ze strumieniem
+volatile bool loading = false;        // stacja wybrana, ale jeszcze nie gra
+volatile bool audioRunning = false;   // biblioteka coś odtwarza
+volatile bool audioBusy = false;      // zadanie audio wykonuje polecenie (np. łączy się ze stacją)
+char announceFile[16] = "";           // nazwa pliku bieżącej zapowiedzi, np. "3.mp3"
+volatile uint32_t announceStartMs = 0;  // kiedy zadanie audio otworzyło plik zapowiedzi
+volatile bool announceReady = false;    // biblioteka zaczęła dekodować zapowiedź
+bool announceRetried = false;
+
+// Polecenia dla zadania audio (zadeklarowane przed funkcjami ze względu na prototypy Arduino).
+enum class AudioCmd : uint8_t { PlayUrl, PlayFile, Stop, Volume };
+
+struct AudioMsg {
+  AudioCmd cmd;
+  uint8_t value;
+  char arg[400];
+};
+
+QueueHandle_t audioQueue;
+
+// Tytuł utworu ustawia zadanie audio, a czyta serwer WWW w loop().
+SemaphoreHandle_t titleLock;
+String streamTitle;
+
+void setTitle(const char* t) {
+  xSemaphoreTake(titleLock, portMAX_DELAY);
+  streamTitle = t;
+  xSemaphoreGive(titleLock);
+}
+
+String title() {
+  xSemaphoreTake(titleLock, portMAX_DELAY);
+  String t = streamTitle;
+  xSemaphoreGive(titleLock);
+  return t;
+}
 
 // ---------- trwałe ustawienia ----------
 
@@ -140,7 +176,9 @@ void prepareNumberClips() {
     FFat.mkdir("/n");
     for (int i = 0; i < STATION_NUMBER_COUNT; i++) {
       char path[16];
-      snprintf(path, sizeof(path), "/n/%d.ogg", i + 1);
+      snprintf(path, sizeof(path), "/n/%d.ogg", i + 1);  // nagrania z wcześniejszej wersji
+      if (FFat.exists(path)) FFat.remove(path);
+      snprintf(path, sizeof(path), "/n/%d%s", i + 1, STATION_NUMBER_EXT);
       File out = FFat.open(path, "w");
       if (!out || out.write(STATION_NUMBER_CLIPS[i].data, STATION_NUMBER_CLIPS[i].len) != STATION_NUMBER_CLIPS[i].len) {
         Serial.printf("Błąd zapisu %s\n", path);
@@ -155,11 +193,72 @@ void prepareNumberClips() {
   numbersReady = true;
 }
 
+// ---------- zadanie audio ----------
+// Łączenie ze stacją (DNS, SSL) trwa nawet kilka sekund. Robi to osobne zadanie, żeby strona
+// i przyciski w loop() nie czekały. loop() wysyła polecenia przez kolejkę (AudioMsg); wszystkie
+// wywołania biblioteki audio (poza ustawieniami w setup()) idą z tego zadania.
+
+void sendAudio(AudioCmd cmd, const char* arg, uint8_t value) {
+  AudioMsg msg{cmd, value, ""};
+  strlcpy(msg.arg, arg, sizeof(msg.arg));
+  if (xQueueSend(audioQueue, &msg, pdMS_TO_TICKS(100)) != pdTRUE) Serial.println("Kolejka audio pełna");
+}
+
+void runAudioCommand(const AudioMsg& msg) {
+  switch (msg.cmd) {
+    case AudioCmd::PlayUrl: audio.connecttohost(msg.arg); break;
+    case AudioCmd::PlayFile:
+      // Bez jawnego stopSong() zapowiedź włączona w trakcie buforowania strumienia bywała
+      // zamykana od razu, bez zdarzenia eof.
+      audio.stopSong();
+      if (audio.connecttoFS(FFat, msg.arg)) {
+        announceStartMs = millis();
+      } else {  // brak nagrania: od razu strumień
+        announcing = false;
+        streamPending = true;
+      }
+      break;
+    case AudioCmd::Stop: audio.stopSong(); break;
+    case AudioCmd::Volume: audio.setVolume(msg.value); break;
+  }
+}
+
+void audioTask(void*) {
+  static AudioMsg batch[8];
+  for (;;) {
+    int n = 0;
+    while (n < 8 && xQueueReceive(audioQueue, &batch[n], 0) == pdTRUE) n++;
+    if (n) {
+      audioBusy = true;
+      // Przy szybkim przełączaniu stacji liczy się tylko ostatnie graj/stop z paczki.
+      int lastPlayback = -1;
+      for (int i = 0; i < n; i++)
+        if (batch[i].cmd != AudioCmd::Volume) lastPlayback = i;
+      for (int i = 0; i < n; i++)
+        if (batch[i].cmd == AudioCmd::Volume || i == lastPlayback) runAudioCommand(batch[i]);
+      audioBusy = false;
+    }
+    audio.loop();
+    audioRunning = audio.isRunning();
+    vTaskDelay(1);
+  }
+}
+
+// ---------- odtwarzanie ----------
+
 void connectStream() {
   const Station& s = stations[currentStation];
   Serial.printf("Gram: %d. %s (%s)\n", currentStation + 1, s.name.c_str(), s.url.c_str());
-  audio.connecttohost(s.url.c_str());
+  sendAudio(AudioCmd::PlayUrl, s.url.c_str(), 0);
   lastStreamOkMs = millis();
+}
+
+void sendAnnounce() {
+  announceStartMs = 0;
+  announceReady = false;
+  char path[20];
+  snprintf(path, sizeof(path), "/n/%s", announceFile);
+  sendAudio(AudioCmd::PlayFile, path, 0);
 }
 
 // announce = false przy ponownym łączeniu po zerwaniu strumienia.
@@ -169,14 +268,15 @@ void startStation(int index, bool announce) {
   playing = true;
   loading = true;
   streamPending = false;
-  streamTitle = "";
-  announcing = false;
-  if (announce && announceEnabled && numbersReady && index < STATION_NUMBER_COUNT) {
-    char path[16];
-    snprintf(path, sizeof(path), "/n/%d.ogg", index + 1);
-    announcing = audio.connecttoFS(FFat, path);
+  setTitle("");
+  announcing = announce && announceEnabled && numbersReady && index < STATION_NUMBER_COUNT;
+  if (announcing) {
+    snprintf(announceFile, sizeof(announceFile), "%d%s", index + 1, STATION_NUMBER_EXT);
+    announceRetried = false;
+    sendAnnounce();
+  } else {
+    connectStream();
   }
-  if (!announcing) connectStream();
   lastStreamOkMs = millis();
   saveState();
 }
@@ -186,43 +286,65 @@ void play(int index) { startStation(index, true); }
 void stop() {
   playing = false;
   loading = announcing = streamPending = false;
-  streamTitle = "";
-  audio.stopSong();
+  setTitle("");
+  sendAudio(AudioCmd::Stop, "", 0);
   saveState();
 }
 
 void setVolume(int v) {
   volume = constrain(v, 0, 21);
-  audio.setVolume(volume);
+  sendAudio(AudioCmd::Volume, "", volume);
   saveState();
 }
 
+// Wywoływane z zadania audio.
 void audioInfo(Audio::msg_t m) {
   if (m.e == Audio::evt_vu) {  // [lewy, prawy, szczyt L, szczyt P]; za częste, żeby logować
     if (m.vec1.size() >= 2) leds::setVuLevel(max(m.vec1[0], m.vec1[1]));
     return;
   }
-  if (m.e == Audio::evt_eof && announcing) {
+  if (announcing && m.e == Audio::evt_info && m.msg && strcmp(m.msg, "stream ready") == 0) announceReady = true;
+  // Koniec właśnie tej zapowiedzi (nie poprzedniej, przerwanej szybką zmianą stacji).
+  if (m.e == Audio::evt_eof && announcing && m.msg && strstr(m.msg, announceFile)) {
     announcing = false;
-    streamPending = true;  // połączenie w loop(), nie wewnątrz callbacku biblioteki
+    streamPending = true;  // połączenie zleca loop()
   }
   // Pierwsza ramka strumienia zdekodowana = gra; koniec ładowania.
   bool decoding = m.e == Audio::evt_bitrate ||
                   (m.e == Audio::evt_info && m.msg && strncmp(m.msg, "SampleRate", 10) == 0);
   if (decoding && !announcing) loading = false;
-  if (m.e == Audio::evt_streamtitle && m.msg) streamTitle = m.msg;
+  if (m.e == Audio::evt_streamtitle && m.msg) setTitle(m.msg);
   Serial.printf("%s: %s\n", m.s ? m.s : "", m.msg ? m.msg : "");
 }
 
 // Gdy strumień się urwie, a użytkownik chce słuchać, łączymy ponownie.
 void keepStreamAlive() {
+  // eof przychodzi, gdy plik jest zdekodowany, a nie odtworzony; połączenie ze stacją czyści
+  // bufor wyjściowy, więc czekamy, aż zapowiedź naprawdę wybrzmi.
+  if (streamPending && announceStartMs && currentStation < STATION_NUMBER_COUNT &&
+      millis() - announceStartMs < STATION_NUMBER_CLIPS[currentStation].ms + 150)
+    return;
   if (streamPending) {
     streamPending = false;
     if (playing) connectStream();
     return;
   }
+  // Po przerwaniu strumienia w trakcie buforowania biblioteka potrafi zawiesić odczyt pliku
+  // zapowiedzi (resztki danych w buforze). Wtedy jedna ponowna próba, a potem od razu stacja.
+  if (announcing && !announceReady && announceStartMs && millis() - announceStartMs > ANNOUNCE_STALL_MS) {
+    if (!announceRetried) {
+      Serial.println("Zapowiedź nie ruszyła, ponawiam");
+      announceRetried = true;
+      sendAnnounce();
+    } else {
+      Serial.println("Zapowiedź nie ruszyła, pomijam");
+      announcing = false;
+      connectStream();
+    }
+    return;
+  }
   if (!playing || apMode) return;
-  if (audio.isRunning()) {
+  if (audioRunning || audioBusy || uxQueueMessagesWaiting(audioQueue)) {
     lastStreamOkMs = millis();
   } else if (millis() - lastStreamOkMs > RECONNECT_DELAY_MS) {
     Serial.println("Strumień przerwany, łączę ponownie");
@@ -275,7 +397,7 @@ void handleStatus() {
   String json = "{\"playing\":" + String(playing ? "true" : "false") +
                 ",\"station\":" + currentStation +
                 ",\"volume\":" + volume +
-                ",\"title\":\"" + jsonEscape(streamTitle) + "\"" +
+                ",\"title\":\"" + jsonEscape(title()) + "\"" +
                 ",\"ip\":\"" + WiFi.localIP().toString() + "\"" +
                 ",\"rssi\":" + WiFi.RSSI() +
                 ",\"host\":\"" + HOSTNAME + ".local\"" +
@@ -547,6 +669,7 @@ void setup() {
   delay(300);
   Serial.println("\n=== Radio internetowe ===");
   pinMode(board::BOOT_BUTTON, INPUT_PULLUP);
+  titleLock = xSemaphoreCreateMutex();
 
   prefs.begin("radio", false);
   loadStations();
@@ -570,6 +693,12 @@ void setup() {
   if (!board::begin()) Serial.println("Błąd inicjalizacji kodeka ES8311 – nie będzie dźwięku");
   prepareNumberClips();
 
+  audioQueue = xQueueCreate(8, sizeof(AudioMsg));
+  // Rdzeń 1 i ten sam priorytet co loop(): FreeRTOS dzieli między nie czas, więc liczenie SSL
+  // przy łączeniu ze stacją (ok. 0,6 s) nie zagładza strony WWW; duży bufor audio kryje przerwy.
+  // Duży stos: uzgadnianie SSL dzieje się w tym zadaniu.
+  xTaskCreatePinnedToCore(audioTask, "audio", 16384, nullptr, 1, nullptr, 1);
+
   if (connectWifi()) {
     Serial.printf("Połączono, IP: %s\n", WiFi.localIP().toString().c_str());
     if (MDNS.begin(HOSTNAME)) {
@@ -585,7 +714,6 @@ void setup() {
 }
 
 void loop() {
-  audio.loop();
   server.handleClient();
   if (apMode) dns.processNextRequest();
   handleButtons();
