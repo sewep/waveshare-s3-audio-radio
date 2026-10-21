@@ -1,0 +1,9 @@
+# Obrazy flasha — duże i mogą zawierać dane Wi-Fi z NVS
+*.bin
+
+# Arduino / PlatformIO / ESP-IDF
+build/
+.pio/
+sdkconfig.old
+managed_components/
+.vscode/
