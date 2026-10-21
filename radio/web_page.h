@@ -101,6 +101,11 @@ code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding
       <p class="muted">Radio odtwarza strumienie MP3, AAC, FLAC, Opus i Vorbis po http lub https. Adresy stacji znajdziesz np. na radio-browser.info (pole „URL”) albo w playlistach <code>.m3u</code> / <code>.pls</code> ze stron rozgłośni.</p>
     </form>
   </div>
+  <div class="card">
+    <h2>Lista domyślna</h2>
+    <p class="muted">Przywraca listę stacji wbudowaną w firmware. Stacje dodane ręcznie zostaną usunięte.</p>
+    <button id="reset">Przywróć domyślne stacje</button>
+  </div>
 </section>
 
 <section data-tab="swiatlo">
@@ -243,6 +248,7 @@ $('vol').oninput=e=>$('volv').textContent=e.target.value;
 $('vol').onchange=e=>post('/api/volume',{v:e.target.value}).then(status);
 $('add').onsubmit=e=>{e.preventDefault();post('/api/stations/add',new FormData(e.target)).then(r=>r.json()).then(r=>{
   if(r.error){alert('Nie dodano: '+r.error);return}e.target.reset();load()})};
+$('reset').onclick=()=>{if(confirm('Zastąpić listę stacji domyślną? Stacje dodane ręcznie zostaną usunięte.'))post('/api/stations/reset',{}).then(load).then(status)};
 
 MODES.forEach(([m,label])=>{const b=document.createElement('button');b.dataset.m=m;b.textContent=label;
   b.onclick=()=>post('/api/led',{mode:m}).then(status);$('modes').append(b)});

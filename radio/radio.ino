@@ -53,6 +53,15 @@ static const Station DEFAULT_STATIONS[] = {
     {"ESKA ROCK", "https://ic2.smcdn.pl/5380-1.mp3"},
     {"VOX FM", "https://ic2.smcdn.pl/3990-1.mp3"},
     {"RMF MAXX", "https://rs9-krk2-cyfronet.rmfstream.pl/RMFMAXXX48"},
+    // Elektronika i trening (sprawdzone 2026-10-22).
+    {"RMF Dance", "https://rs102-krk.rmfstream.pl/rmf_dance"},
+    {"RMF Fitness", "https://rs102-krk.rmfstream.pl/rmf_fitness"},
+    {"ZET Dance", "http://pl01.cdn.eurozet.pl/ZETDAN.mp3"},
+    {"Sunshine Live", "http://stream.sunshine-live.de/live/mp3-192/stream.sunshine-live.de/"},
+    {"Sunshine Live Workout", "http://stream.sunshine-live.de/workout/mp3-192/stream.sunshine-live.de/"},
+    {"Technolovers EDM", "https://stream.technolovers.fm/edm"},
+    {"I Love 2 Dance", "https://streams.ilovemusic.de/iloveradio2.mp3"},
+    {"Dance Wave!", "https://dancewave.online/dance.mp3"},
 };
 
 Audio audio;
@@ -129,10 +138,12 @@ void loadStations() {
     stations.push_back({data.substring(pos, tab), data.substring(tab + 1, nl)});
     pos = nl + 1;
   }
-  if (stations.empty()) {
-    for (auto& s : DEFAULT_STATIONS) stations.push_back(s);
-    saveStations();
-  }
+  if (stations.empty()) setDefaultStations();
+}
+
+void setDefaultStations() {
+  stations.assign(std::begin(DEFAULT_STATIONS), std::end(DEFAULT_STATIONS));
+  saveStations();
 }
 
 void saveState() {
@@ -469,6 +480,15 @@ void handleDeleteStation() {
   sendOk();
 }
 
+// Zastępuje listę domyślną; stacje dodane przez użytkownika przepadają.
+void handleResetStations() {
+  if (playing) stop();
+  setDefaultStations();
+  currentStation = 0;
+  saveState();
+  sendOk();
+}
+
 void handleScan() {
   int n = WiFi.scanNetworks();
   String json = "[";
@@ -519,6 +539,7 @@ void setupRoutes() {
     server.on("/api/volume", HTTP_POST, [] { setVolume(server.arg("v").toInt()); sendOk(); });
     server.on("/api/stations/add", HTTP_POST, handleAddStation);
     server.on("/api/stations/delete", HTTP_POST, handleDeleteStation);
+    server.on("/api/stations/reset", HTTP_POST, handleResetStations);
     server.on("/api/led", HTTP_POST, handleLed);
     server.on("/api/announce", HTTP_POST, [] {
       announceEnabled = server.arg("on") == "1";
