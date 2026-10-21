@@ -1,6 +1,8 @@
 #pragma once
 
-// Strona sterowania radiem (tryb normalny).
+// Strona sterowania radiem (tryb normalny). Zakładki: Radio, Stacje, Podświetlenie, Pomoc;
+// aktywna zakładka jest w adresie (#radio, #stacje, #swiatlo, #pomoc). Sekcje mają data-tab,
+// a nie id, żeby przeglądarka nie przewijała do nich pod przyklejony pasek zakładek.
 static const char INDEX_HTML[] PROGMEM = R"HTML(<!doctype html>
 <html lang="pl"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -9,91 +11,221 @@ static const char INDEX_HTML[] PROGMEM = R"HTML(<!doctype html>
 :root{--bg:#f4f5f7;--card:#fff;--fg:#1d2330;--muted:#6b7280;--accent:#2563eb;--line:#e5e7eb;--danger:#dc2626}
 @media (prefers-color-scheme:dark){:root{--bg:#111318;--card:#1b1e25;--fg:#e8eaf0;--muted:#9aa1ad;--accent:#60a5fa;--line:#2b2f38;--danger:#f87171}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.4 system-ui,sans-serif}
-main{max-width:560px;margin:0 auto;padding:16px}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.45 system-ui,sans-serif}
+main{max-width:560px;margin:0 auto;padding:16px 16px 32px}
+nav{position:sticky;top:0;z-index:1;background:var(--bg);display:flex;gap:4px;max-width:560px;margin:0 auto;padding:8px 16px;border-bottom:1px solid var(--line)}
+nav a{flex:1;text-align:center;padding:8px 4px;border-radius:8px;color:var(--muted);text-decoration:none;font-size:14px;font-weight:600}
+nav a.on{background:var(--card);color:var(--accent);box-shadow:0 0 0 1px var(--line)}
+section{display:none}section.on{display:block}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
-h1{font-size:20px;margin:0 0 4px}
+h2{font-size:17px;margin:0 0 8px}
+p{margin:6px 0}
 .muted{color:var(--muted);font-size:14px}
-.now{font-size:18px;font-weight:600;margin:8px 0 2px}
+.now{font-size:20px;font-weight:600;margin:4px 0 2px}
 .title{min-height:1.4em}
-.row{display:flex;gap:8px;align-items:center}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 button{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:8px;padding:8px 12px;cursor:pointer}
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 button.del{color:var(--danger);border-color:transparent;background:none;padding:8px}
-input[type=range]{flex:1}
+input[type=range]{flex:1;min-width:120px}
 input[type=text],input[type=url]{font:inherit;width:100%;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg)}
+input[type=color]{width:44px;height:36px;padding:0;border:1px solid var(--line);border-radius:8px;background:none}
 ul{list-style:none;margin:0;padding:0}
 li{display:flex;align-items:center;gap:8px;border-top:1px solid var(--line);padding:4px 0}
 li:first-child{border-top:none}
 li .name{flex:1;padding:8px 0;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 li.on .name{color:var(--accent);font-weight:600}
+li .url{flex:1;min-width:0}
+li .url small{display:block;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 form{display:grid;gap:8px}
-.chips{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
 .chips button.on{background:var(--accent);border-color:var(--accent);color:#fff}
-input[type=color]{width:44px;height:36px;padding:0;border:1px solid var(--line);border-radius:8px;background:none}
-</style></head><body><main>
-<div class="card">
-  <h1>Radio</h1>
-  <div class="muted" id="net"></div>
-  <div class="now" id="station">—</div>
-  <div class="muted title" id="title"></div>
-  <div class="row" style="margin-top:12px">
-    <button id="toggle" class="primary">Graj</button>
-    <span class="muted">Głośność</span>
-    <input type="range" id="vol" min="0" max="21">
-    <span id="volv" class="muted" style="width:2ch"></span>
+table{width:100%;border-collapse:collapse;font-size:15px}
+th,td{text-align:left;vertical-align:top;padding:8px 6px;border-top:1px solid var(--line)}
+th{font-size:13px;color:var(--muted);font-weight:600;border-top:none}
+td:first-child{font-weight:600;white-space:nowrap}
+ol,ul.dots{margin:6px 0;padding-left:20px}
+ul.dots{list-style:disc}ol li,ul.dots li{display:list-item;border:none;padding:2px 0}
+code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:0 4px;font-size:14px}
+</style></head><body>
+<nav>
+  <a href="#radio">Radio</a><a href="#stacje">Stacje</a><a href="#swiatlo">Podświetlenie</a><a href="#pomoc">Pomoc</a>
+</nav>
+<main>
+
+<section data-tab="radio">
+  <div class="card">
+    <div class="muted">Teraz</div>
+    <div class="now" id="station">—</div>
+    <div class="muted title" id="title"></div>
+    <div class="row" style="margin-top:12px">
+      <button id="prev" title="Poprzednia stacja">⏮</button>
+      <button id="toggle" class="primary">Graj</button>
+      <button id="next" title="Następna stacja">⏭</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <span class="muted">Głośność</span>
+      <input type="range" id="vol" min="0" max="21">
+      <span id="volv" class="muted" style="width:2ch"></span>
+    </div>
   </div>
-</div>
-<div class="card"><ul id="list"></ul></div>
-<div class="card">
-  <strong>Podświetlenie</strong>
-  <div class="chips" id="modes"></div>
-  <div class="row">
-    <span class="muted">Kolor</span><input type="color" id="ledColor">
-    <span class="muted">Jasność</span><input type="range" id="ledBright" min="5" max="255">
+  <div class="card">
+    <h2>Stacje</h2>
+    <ul id="quick"></ul>
   </div>
-</div>
-<div class="card">
-  <form id="add">
-    <strong>Dodaj stację</strong>
-    <input type="text" name="name" placeholder="Nazwa" required maxlength="40">
-    <input type="url" name="url" placeholder="Adres strumienia (http/https)" required>
-    <button class="primary">Dodaj</button>
-  </form>
-</div>
+</section>
+
+<section data-tab="stacje">
+  <div class="card">
+    <h2>Lista stacji</h2>
+    <p class="muted">Kolejność na liście to kolejność przełączania przyciskiem Key3.</p>
+    <ul id="manage"></ul>
+  </div>
+  <div class="card">
+    <form id="add">
+      <h2>Dodaj stację</h2>
+      <input type="text" name="name" placeholder="Nazwa, np. Radio Kraków" required maxlength="40">
+      <input type="url" name="url" placeholder="Adres strumienia, np. https://…/stream.mp3" required>
+      <button class="primary">Dodaj</button>
+      <p class="muted">Radio odtwarza strumienie MP3, AAC, FLAC, Opus i Vorbis po http lub https. Adresy stacji znajdziesz np. na radio-browser.info (pole „URL”) albo w playlistach <code>.m3u</code> / <code>.pls</code> ze stron rozgłośni.</p>
+    </form>
+  </div>
+</section>
+
+<section data-tab="swiatlo">
+  <div class="card">
+    <h2>Tryb</h2>
+    <div class="chips" id="modes"></div>
+    <p class="muted" id="modeDesc"></p>
+  </div>
+  <div class="card">
+    <h2>Kolor i jasność</h2>
+    <div class="row">
+      <span class="muted">Kolor</span><input type="color" id="ledColor">
+      <span class="muted">Jasność</span><input type="range" id="ledBright" min="5" max="255">
+    </div>
+    <p class="muted">Kolor dotyczy trybów Stały kolor, Oddech i Kometa. Jasność dotyczy wszystkich trybów.</p>
+  </div>
+  <div class="card">
+    <h2>Sygnały specjalne</h2>
+    <table>
+      <tr><th>Światło</th><th>Znaczenie</th></tr>
+      <tr><td>Tęcza i błyski R-G-B</td><td>Radio właśnie dostało zasilanie.</td></tr>
+      <tr><td>Niebieska kometa</td><td>Łączenie z Wi-Fi.</td></tr>
+      <tr><td>Niebieski oddech</td><td>Tryb konfiguracji Wi-Fi (hotspot <code>Radio-XXXX</code>).</td></tr>
+      <tr><td>Czerwone pulsowanie</td><td>Bateria poniżej 10% (tylko gdy pomiar baterii jest podłączony).</td></tr>
+    </table>
+    <p class="muted">W trybie Wyłączone gasną także te sygnały, poza animacją po włączeniu zasilania.</p>
+  </div>
+</section>
+
+<section data-tab="pomoc">
+  <div class="card">
+    <h2>Przyciski na płytce</h2>
+    <table>
+      <tr><th>Przycisk</th><th>Krótko</th><th>Przytrzymanie</th></tr>
+      <tr><td>Key1</td><td>Głośniej</td><td>Ściszanie, dopóki trzymasz</td></tr>
+      <tr><td>Key2</td><td>Graj / stop</td><td>—</td></tr>
+      <tr><td>Key3</td><td>Następna stacja</td><td>Poprzednia stacja (ok. 1 s)</td></tr>
+      <tr><td>BOOT</td><td>Graj / stop</td><td>3 s: zapomnij Wi-Fi i uruchom konfigurację</td></tr>
+      <tr><td>RESET</td><td colspan="2">Restart radia (ustawienia zostają)</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h2>Jak korzystać</h2>
+    <ul class="dots">
+      <li>Kliknij stację na liście, żeby jej słuchać. Radio pamięta ostatnią stację i głośność, a po włączeniu zasilania samo zaczyna grać.</li>
+      <li>Strona działa na każdym urządzeniu w tej samej sieci pod adresem <code>http://radio.local</code>. Jeśli adres się nie otwiera, użyj numeru IP z sekcji poniżej albo rozłącz VPN.</li>
+      <li>Gdy strumień się urwie, radio po kilku sekundach samo połączy się ponownie.</li>
+      <li>Zmiany zrobione przyciskami pojawiają się na stronie po kilku sekundach.</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h2>Zmiana sieci Wi-Fi</h2>
+    <ol>
+      <li>Przytrzymaj BOOT przez 3 sekundy — radio uruchomi się ponownie.</li>
+      <li>Połącz telefon z siecią <code>Radio-XXXX</code> (bez hasła).</li>
+      <li>Strona konfiguracji otworzy się sama, a jeśli nie, wejdź na <code>http://192.168.4.1</code>.</li>
+      <li>Wybierz sieć, wpisz hasło i zapisz. Lista stacji i ustawienia zostają.</li>
+    </ol>
+  </div>
+  <div class="card">
+    <h2>Urządzenie</h2>
+    <table id="device"></table>
+  </div>
+</section>
+
 </main>
 <script>
 const $=id=>document.getElementById(id);
 let st={},stations=[];
 const post=(u,d)=>fetch(u,{method:'POST',body:new URLSearchParams(d||{})});
+const MODES=[
+  ['off','Wyłączone','Wszystkie diody zgaszone.'],
+  ['status','Status','Przygaszona zieleń, gdy radio gra; jedna bursztynowa dioda, gdy stoi.'],
+  ['color','Stały kolor','Cały pierścień świeci wybranym kolorem.'],
+  ['breathe','Oddech','Wybrany kolor powoli rozjaśnia się i przygasa.'],
+  ['rainbow','Tęcza','Kolory tęczy krążą po pierścieniu.'],
+  ['comet','Kometa','Świetlny punkt z ogonem krąży w wybranym kolorze.'],
+  ['vu','Wizualizer','Diody zapalają się w rytm muzyki, od zielonej do czerwonej.']];
+
+function showTab(){
+  let id=(location.hash||'#radio').slice(1);
+  if(!document.querySelector(`section[data-tab="${id}"]`))id='radio';
+  document.querySelectorAll('section').forEach(s=>s.classList.toggle('on',s.dataset.tab===id));
+  document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.hash==='#'+id));
+  window.scrollTo(0,0);
+}
+window.onhashchange=showTab;showTab();
+
 async function load(){stations=await (await fetch('/api/stations')).json();render()}
 async function status(){try{st=await (await fetch('/api/status')).json();render()}catch(e){}}
+const play=i=>post('/api/play',{i}).then(status);
+
 function render(){
   const cur=stations[st.station];
   $('station').textContent=cur?cur.name:'—';
   $('title').textContent=st.playing?(st.title||''):'Zatrzymane';
   $('toggle').textContent=st.playing?'Stop':'Graj';
   if(document.activeElement!==$('vol')){$('vol').value=st.volume;$('volv').textContent=st.volume}
-  $('net').textContent=st.host?`${st.host} · ${st.ip} · Wi-Fi ${st.rssi} dBm`+(st.battery>=0?` · bateria ${st.battery}%`:''):'';
+
+  const q=$('quick');q.innerHTML='';
+  const m=$('manage');m.innerHTML='';
+  stations.forEach((s,i)=>{
+    const li=document.createElement('li');if(st.playing&&i===st.station)li.className='on';
+    const n=document.createElement('span');n.className='name';n.textContent=s.name;n.onclick=()=>play(i);
+    li.append(n);q.append(li);
+
+    const li2=document.createElement('li');
+    const u=document.createElement('div');u.className='url';u.textContent=s.name;
+    const sm=document.createElement('small');sm.textContent=s.url;u.append(sm);
+    const d=document.createElement('button');d.className='del';d.textContent='✕';d.title='Usuń';
+    d.onclick=()=>{if(confirm('Usunąć '+s.name+'?'))post('/api/stations/delete',{i}).then(load).then(status)};
+    li2.append(u,d);m.append(li2);
+  });
+
   if(st.led){
+    const md=MODES.find(x=>x[0]===st.led.mode);
     document.querySelectorAll('#modes button').forEach(b=>b.classList.toggle('on',b.dataset.m===st.led.mode));
+    $('modeDesc').textContent=md?md[2]:'';
     if(document.activeElement!==$('ledColor'))$('ledColor').value=st.led.color;
     if(document.activeElement!==$('ledBright'))$('ledBright').value=st.led.brightness;
   }
-  const ul=$('list');ul.innerHTML='';
-  stations.forEach((s,i)=>{
-    const li=document.createElement('li');if(st.playing&&i===st.station)li.className='on';
-    const n=document.createElement('span');n.className='name';n.textContent=s.name;n.title=s.url;
-    n.onclick=()=>post('/api/play',{i}).then(status);
-    const d=document.createElement('button');d.className='del';d.textContent='✕';d.title='Usuń';
-    d.onclick=()=>{if(confirm('Usunąć '+s.name+'?'))post('/api/stations/delete',{i}).then(load).then(status)};
-    li.append(n,d);ul.append(li)});
+
+  const rows=[['Adres',st.host?`http://${st.host}`:'—'],['IP',st.ip||'—'],['Wi-Fi',st.rssi!==undefined?`${st.rssi} dBm`+(st.rssi>-67?' (dobry)':st.rssi>-75?' (średni)':' (słaby)'):'—'],
+    ['Bateria',st.battery>=0?`${st.battery}%`:'pomiar niepodłączony']];
+  $('device').innerHTML='';
+  rows.forEach(([k,v])=>{const tr=document.createElement('tr');const a=document.createElement('td');a.textContent=k;const b=document.createElement('td');b.textContent=v;tr.append(a,b);$('device').append(tr)});
 }
+
 $('toggle').onclick=()=>post(st.playing?'/api/stop':'/api/play',st.playing?{}:{i:Math.max(0,st.station)}).then(status);
+$('prev').onclick=()=>stations.length&&play((st.station-1+stations.length)%stations.length);
+$('next').onclick=()=>stations.length&&play((st.station+1)%stations.length);
 $('vol').oninput=e=>$('volv').textContent=e.target.value;
 $('vol').onchange=e=>post('/api/volume',{v:e.target.value}).then(status);
-$('add').onsubmit=e=>{e.preventDefault();post('/api/stations/add',new FormData(e.target)).then(()=>{e.target.reset();load()})};
-const MODES=[['off','Wyłączone'],['status','Status'],['color','Stały kolor'],['breathe','Oddech'],['rainbow','Tęcza'],['comet','Kometa'],['vu','Wizualizer']];
+$('add').onsubmit=e=>{e.preventDefault();post('/api/stations/add',new FormData(e.target)).then(r=>r.json()).then(r=>{
+  if(r.error){alert('Nie dodano: '+r.error);return}e.target.reset();load()})};
+
 MODES.forEach(([m,label])=>{const b=document.createElement('button');b.dataset.m=m;b.textContent=label;
   b.onclick=()=>post('/api/led',{mode:m}).then(status);$('modes').append(b)});
 $('ledColor').onchange=e=>post('/api/led',{color:e.target.value}).then(status);

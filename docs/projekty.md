@@ -6,7 +6,7 @@ Kolejka pomysłów na płytkę. Przed wgraniem czegokolwiek: kopia fabryczna jes
 
 Kod: [radio/](../radio/) (Arduino, ESP32-audioI2S 4.0.0, rdzeń esp32 3.3.12).
 
-- Zrobione: odtwarzanie MP3/AAC na ES8311, strona WWW pod `http://radio.local` (graj/stop, głośność, lista stacji z dodawaniem i usuwaniem), konfiguracja Wi-Fi przez hotspot `Radio-XXXX`, pamięć ostatniej stacji i głośności, ponowne łączenie po zerwaniu strumienia, przyciski: Key1 głośniej (przytrzymanie = ściszanie), Key2 graj/stop, Key3 następna stacja (przytrzymanie = poprzednia), BOOT graj/stop i reset Wi-Fi (3 s).
+- Zrobione: odtwarzanie MP3/AAC na ES8311, strona WWW pod `http://radio.local` z zakładkami Radio / Stacje / Podświetlenie / Pomoc (graj/stop, poprzednia/następna, głośność, lista stacji z dodawaniem i usuwaniem, instrukcja i opis przycisków, dane urządzenia), konfiguracja Wi-Fi przez hotspot `Radio-XXXX`, pamięć ostatniej stacji i głośności, ponowne łączenie po zerwaniu strumienia, przyciski: Key1 głośniej (przytrzymanie = ściszanie), Key2 graj/stop, Key3 następna stacja (przytrzymanie = poprzednia), BOOT graj/stop i reset Wi-Fi (3 s).
 - Sprawdzone na sprzęcie: konfiguracja Wi-Fi przez hotspot, dźwięk z głośnika, strona pod `radio.local`.
 - Diody (7× WS2812 na GPIO38): animacja tęczy i błyski R-G-B po włączeniu zasilania; tryby wybierane na stronie: wyłączone, status, stały kolor, oddech, tęcza, kometa, wizualizer muzyki; kolor i jasność. Niebieska kometa = łączenie z Wi-Fi, niebieski oddech = tryb konfiguracji.
 - Bateria: czerwone pulsowanie poniżej 10% jest w kodzie, ale wyłączone (`BATTERY_ADC_ENABLED` w `board.h`) — płytka fabrycznie nie mierzy napięcia baterii; wymaga wlutowania zworki 0R przy GPIO1, co wyłącza kamerę.
