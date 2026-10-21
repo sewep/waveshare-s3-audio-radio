@@ -7,7 +7,7 @@
 //   Key3  krótko = głośniej, przytrzymanie = następna stacja
 //   BOOT  krótko = graj/stop, przytrzymanie 3 s = zapomnij Wi-Fi i uruchom konfigurację
 // Przy starcie i zmianie stacji radio wypowiada jej numer (nagrania 1..40 wbudowane w firmware,
-// przy starcie zapisywane na partycję FFat). Od wybrania stacji do pierwszych dźwięków
+// przy starcie zapisywane na partycję FFat; stacje 41..99 grają bez zapowiedzi). Od wybrania stacji do pierwszych dźwięków
 // diody pokazują niebieską kometę.
 // Bez zapisanej sieci (albo gdy połączenie się nie uda) radio wystawia hotspot "Radio-XXXX",
 // a konfiguracja Wi-Fi jest pod http://192.168.4.1.
@@ -37,12 +37,17 @@ static const uint32_t SLOW_STREAM_SHOW_MS = 3000;  // „slow stream” przychod
 static const uint32_t WIFI_RESET_PRESS_MS = 3000;
 static const uint32_t KEY_POLL_MS = 20;
 static const uint32_t BATTERY_POLL_MS = 10000;
-static const size_t MAX_STATIONS = 40;
+static const size_t MAX_STATIONS = 99;  // zapowiedź numeru tylko do STATION_NUMBER_COUNT
+static const char* STATIONS_FILE = "/stations.tsv";
+static const char* STATIONS_TMP_FILE = "/stations.tmp";
 
 struct Station {
   String name;
   String url;
 };
+
+#define BBC_HLS \
+  "http://a.files.bbci.co.uk/ms6/live/3441A116-B12E-4D2F-ACA8-C1984642FA4B/audio/simulcast/hls/nonuk/pc_hd_abr_v2/ak/"
 
 // Domyślna lista; sprawdzone, że strumienie odpowiadają (2026-10-21).
 static const Station DEFAULT_STATIONS[] = {
@@ -64,6 +69,26 @@ static const Station DEFAULT_STATIONS[] = {
     {"Technolovers EDM", "https://stream.technolovers.fm/edm"},
     {"I Love 2 Dance", "https://streams.ilovemusic.de/iloveradio2.mp3"},
     {"Dance Wave!", "https://dancewave.online/dance.mp3"},
+    {"RauteMusik Workout", "https://workout-high.rautemusik.fm/"},
+    {"Antenne Bayern Workout", "http://mp3channels.webradio.antenne.de/workout-hits"},
+    {"FFH Workout", "http://streams.ffh.de/ffhchannels/mp3/hqworkout.mp3"},
+    {"Fitness Radio", "https://stream.mixadance.fm/fitness"},
+    {"Intense Radio", "https://secure.live-streams.nl/main"},
+    {"RauteMusik Club", "https://club-high.rautemusik.fm/"},
+    {"RauteMusik House", "https://house-high.rautemusik.fm/"},
+    {"1.FM Amsterdam Trance", "http://strm112.1.fm/atr_mobile_mp3"},
+    // BBC i rozmowy (sprawdzone na radiu 2026-10-22; .m3u8 to HLS, biblioteka je obsługuje).
+    {"BBC World Service", "https://stream.live.vc.bbcmedia.co.uk/bbc_world_service"},
+    {"BBC Radio 1", BBC_HLS "bbc_radio_one.m3u8"},
+    {"BBC Radio 1 Dance", BBC_HLS "bbc_radio_one_dance.m3u8"},
+    {"BBC Radio 2", BBC_HLS "bbc_radio_two.m3u8"},
+    {"BBC Radio 4", BBC_HLS "bbc_radio_fourfm.m3u8"},
+    {"TOK FM", "https://radiostream.pl/tuba10-1.mp3"},
+    {"Radio 357", "https://stream.radio357.pl/"},
+    {"Polskie Radio 24", "https://stream15.polskieradio.pl/pr24/pr24.sdp/playlist.m3u8"},
+    {"NPR", "https://npr-ice.streamguys1.com/live.mp3"},
+    {"LBC News", "http://media-ice.musicradio.com/LBCUKMP3Low"},
+    {"Times Radio", "https://timesradio.wireless.radio/stream"},
 };
 
 Audio audio;
@@ -80,6 +105,7 @@ uint32_t lastStreamOkMs = 0;
 int battery = -1;
 
 bool announceEnabled = true;  // wypowiadanie numeru stacji
+bool fsReady = false;         // partycja FFat zamontowana
 bool numbersReady = false;    // nagrania liczebników są na FFat
 
 // Flagi wspólne dla loop() i zadania audio.
@@ -126,17 +152,41 @@ String title() {
 
 // ---------- trwałe ustawienia ----------
 
+// Lista stacji leży w pliku na FFat: w Preferences napis ma limit 4000 bajtów, a to za mało
+// na kilkadziesiąt stacji z długimi adresami (np. BBC). Zapis przez plik tymczasowy, żeby
+// zanik zasilania w trakcie nie zostawił uciętej listy.
 void saveStations() {
   String data;
   for (auto& s : stations) data += s.name + '\t' + s.url + '\n';
-  prefs.putString("stations", data);
+  if (fsReady) {
+    File f = FFat.open(STATIONS_TMP_FILE, "w");
+    bool ok = f && f.print(data) == data.length();
+    if (f) f.close();
+    if (ok && (!FFat.exists(STATIONS_FILE) || FFat.remove(STATIONS_FILE)) &&
+        FFat.rename(STATIONS_TMP_FILE, STATIONS_FILE)) {
+      if (prefs.isKey("stations")) prefs.remove("stations");  // lista sprzed przeniesienia na FFat
+      return;
+    }
+    Serial.println("Błąd zapisu listy stacji na FFat");
+  }
+  if (data.length() < 4000) prefs.putString("stations", data);  // awaryjnie, bez FFat
 }
 
 void loadStations() {
   stations.clear();
-  String data = prefs.getString("stations", "");
+  String data;
+  bool fromFile = false;
+  if (fsReady) {
+    File f = FFat.open(STATIONS_FILE, "r");
+    if (f) {
+      data = f.readString();
+      f.close();
+      fromFile = true;
+    }
+  }
+  if (!fromFile) data = prefs.getString("stations", "");
   int pos = 0;
-  while (pos < (int)data.length()) {
+  while (pos < (int)data.length() && stations.size() < MAX_STATIONS) {
     int tab = data.indexOf('\t', pos);
     int nl = data.indexOf('\n', pos);
     if (tab < 0 || nl < 0 || tab > nl) break;
@@ -144,6 +194,7 @@ void loadStations() {
     pos = nl + 1;
   }
   if (stations.empty()) setDefaultStations();
+  else if (!fromFile && fsReady) saveStations();  // przeniesienie z Preferences na FFat
 }
 
 void setDefaultStations() {
@@ -161,6 +212,7 @@ void saveLeds() {
   prefs.putUChar("ledMode", (uint8_t)leds::mode());
   prefs.putUInt("ledColor", leds::color());
   prefs.putUChar("ledBright", leds::brightness());
+  prefs.putUChar("ledAuto", leds::autoSeconds());
 }
 
 void setLedsDarkWhilePlaying(bool on) {
@@ -171,14 +223,16 @@ void setLedsDarkWhilePlaying(bool on) {
 
 void applyLedMode(leds::Mode m) {
   leds::setMode(m);
-  audio.settings.VU_LEVEL = leds::usesMusic(m);  // poziom liczony tylko, gdy potrzebny
+  // poziom i widmo liczone tylko, gdy tryb ich potrzebuje
+  audio.settings.VU_LEVEL = leds::usesVu(m);
+  audio.settings.SPECTRUM = leds::usesSpectrum(m);
 }
 
 // ---------- odtwarzanie ----------
 
 // Nagrania liczebników trafiają na FFat tylko wtedy, gdy zmieniła się ich wersja (CRC).
 void prepareNumberClips() {
-  if (!FFat.begin(true)) {
+  if (!fsReady) {
     Serial.println("FFat niedostępny – bez zapowiedzi numerów");
     return;
   }
@@ -321,6 +375,10 @@ void audioInfo(Audio::msg_t m) {
     if (m.vec1.size() >= 2) leds::setVuLevel(max(m.vec1[0], m.vec1[1]));
     return;
   }
+  if (m.e == Audio::evt_spectrum) {  // co 50 ms, też za często, żeby logować
+    leds::setSpectrum(m.vec1);
+    return;
+  }
   if (announcing && m.e == Audio::evt_info && m.msg && strcmp(m.msg, "stream ready") == 0) announceReady = true;
   // Koniec właśnie tej zapowiedzi (nie poprzedniej, przerwanej szybką zmianą stacji).
   if (m.e == Audio::evt_eof && announcing && m.msg && strstr(m.msg, announceFile)) {
@@ -416,7 +474,8 @@ String ledJson() {
   snprintf(color, sizeof(color), "#%06lx", (unsigned long)leds::color());
   return String(",\"led\":{\"mode\":\"") + leds::modeId(leds::mode()) + "\",\"color\":\"" + color +
          "\",\"brightness\":" + leds::brightness() +
-         ",\"dark\":" + (leds::darkWhilePlaying() ? "true" : "false") + "}";
+         ",\"dark\":" + (leds::darkWhilePlaying() ? "true" : "false") +
+         ",\"auto\":" + leds::autoSeconds() + ",\"now\":\"" + leds::modeId(leds::currentEffect()) + "\"}";
 }
 
 void handleStatus() {
@@ -447,6 +506,7 @@ void handleLed() {
   }
   if (server.hasArg("brightness")) leds::setBrightness(constrain(server.arg("brightness").toInt(), 0, 255));
   if (server.hasArg("dark")) setLedsDarkWhilePlaying(server.arg("dark") == "1");
+  if (server.hasArg("auto")) leds::setAutoSeconds(constrain(server.arg("auto").toInt(), 5, 120));
   saveLeds();
   sendOk();
 }
@@ -724,6 +784,7 @@ void setup() {
   titleLock = xSemaphoreCreateMutex();
 
   prefs.begin("radio", false);
+  fsReady = FFat.begin(true);
   loadStations();
   currentStation = constrain(prefs.getInt("station", 0), 0, (int)stations.size() - 1);
   volume = prefs.getUChar("volume", 8);
@@ -734,6 +795,7 @@ void setup() {
   leds::setColor(prefs.getUInt("ledColor", 0xFF6A00));
   leds::setBrightness(prefs.getUChar("ledBright", 60));
   leds::setDarkWhilePlaying(prefs.getBool("ledDark", false));
+  leds::setAutoSeconds(prefs.getUChar("ledAuto", 15));
   uint8_t ledMode = prefs.getUChar("ledMode", (uint8_t)leds::Mode::Rainbow);
   applyLedMode(ledMode < (uint8_t)leds::Mode::Count ? (leds::Mode)ledMode : leds::Mode::Rainbow);
   leds::setState(leds::State::Connecting);

@@ -11,8 +11,10 @@ constexpr uint32_t BOOT_FLASH_MS = 120;  // trzy błyski R, G, B po spinie
 constexpr int LOW_BATTERY_ON = 10;       // poniżej: czerwone pulsowanie
 constexpr int LOW_BATTERY_OFF = 13;      // histereza, żeby nie migało na granicy
 
-const char* const MODE_IDS[] = {"off",     "status", "color",  "breathe", "rainbow", "comet", "vu",
-                                "fire",    "sparkle", "police", "rcomet", "wave",    "pulse", "disco"};
+const char* const MODE_IDS[] = {"off",        "status",   "color",    "breathe", "rainbow", "comet",
+                                "vu",         "fire",     "sparkle",  "police",  "rcomet",  "wave",
+                                "pulse",      "disco",    "colororgan", "spectrum", "confetti", "aurora",
+                                "bounce",     "twins",    "auto"};
 static_assert(sizeof(MODE_IDS) / sizeof(MODE_IDS[0]) == (size_t)Mode::Count, "MODE_IDS a enum Mode");
 constexpr int MAX_LEDS = 16;
 
@@ -29,15 +31,34 @@ volatile int batteryPercent = -1;
 volatile bool darkPlaying = false;
 bool lowBattery = false;
 
-// Muzyka: biblioteka podaje pierwiastek z amplitudy, więc głośna, skompresowana muzyka (EDM)
-// stoi prawie przy maksimum. Kwadrat przywraca dynamikę, a ruchome „dno” i „sufit” rozciągają
-// to, co zostało, na cały pierścień.
-float musFloor = 0;
-float musCeil = 64;
-float musLevel = 0;  // 0..1, szybki atak, wolne opadanie
-bool beat = false;   // w tej klatce wypadło uderzenie
+// Ruchome „dno” i „sufit” sygnału: wynik 0..1 rozciągnięty na to, co akurat gra, więc efekty
+// reagują tak samo przy cichej i przy mocno skompresowanej muzyce.
+struct Env {
+  float floor = 0;
+  float ceil = 64;
+  float level = 0;  // wygładzony: szybki atak, wolne opadanie
+
+  float update(float x, float minSpan) {  // zwraca poziom bez wygładzania
+    floor = x < floor ? x : floor + (x - floor) * 0.02f;  // ok. 1,5 s w górę
+    ceil = x > ceil ? x : ceil + (x - ceil) * 0.005f;     // ok. 6 s w dół
+    float v = constrain((x - floor) / max(ceil - floor, minSpan), 0.0f, 1.0f);
+    level = v > level ? v : level * 0.85f + v * 0.15f;
+    return v;
+  }
+};
+
+// Głośność: biblioteka podaje pierwiastek z amplitudy, więc głośna, skompresowana muzyka (EDM)
+// stoi prawie przy maksimum; kwadrat przywraca dynamikę.
+Env music;
+bool beat = false;  // w tej klatce wypadło uderzenie
 bool beatArmed = true;
 uint32_t lastBeatMs = 0;
+
+// Widmo: 15 pasm z FFT biblioteki (skala decybelowa 0..255), od ok. 90 Hz do 18 kHz.
+constexpr int SPECTRUM_BANDS = 15;
+volatile uint8_t spectrum[SPECTRUM_BANDS];
+Env organ[3];             // kolorofon: bas, średnie, wysokie
+Env specLed[MAX_LEDS];    // analizator: pasma przypisane kolejnym diodom
 
 // Stan efektów.
 float heat[MAX_LEDS];
@@ -45,6 +66,21 @@ float spark[MAX_LEDS];
 uint16_t discoHue[MAX_LEDS];
 uint16_t pulseHue = 0;
 float pulse = 0;
+uint16_t confettiHue[MAX_LEDS];
+float confettiK[MAX_LEDS];
+
+// Pokaz: kolejność efektów i płynne przejście między nimi.
+const Mode AUTO_LIST[] = {Mode::Rainbow, Mode::Pulse,    Mode::RainbowComet, Mode::ColorOrgan,
+                          Mode::Fire,    Mode::Disco,    Mode::Wave,         Mode::Spectrum,
+                          Mode::Confetti, Mode::Vu,      Mode::Aurora,       Mode::Sparkle,
+                          Mode::Bounce,  Mode::Twins,    Mode::Breathe,      Mode::Comet};
+constexpr int AUTO_COUNT = sizeof(AUTO_LIST) / sizeof(AUTO_LIST[0]);
+constexpr uint32_t AUTO_FADE_MS = 1000;
+volatile uint8_t autoSec = 15;
+volatile int autoIdx = 0;
+int autoPrev = -1;  // efekt, z którego trwa przejście; -1 = bez przejścia
+uint32_t autoStartMs = 0;
+bool autoRunning = false;
 
 uint32_t scale(uint32_t rgb, float k) {
   k = constrain(k, 0.0f, 1.0f) * curBrightness / 255.0f;
@@ -92,13 +128,33 @@ bool renderBoot(uint32_t t) {
   return true;
 }
 
+void addPixel(int i, uint32_t c) {  // dodawanie kolorów z nasyceniem (nakładające się efekty)
+  uint32_t o = strip->getPixelColor(i);
+  strip->setPixelColor(i, min<uint32_t>(255, ((o >> 16) & 0xFF) + ((c >> 16) & 0xFF)),
+                       min<uint32_t>(255, ((o >> 8) & 0xFF) + ((c >> 8) & 0xFF)),
+                       min<uint32_t>(255, (o & 0xFF) + (c & 0xFF)));
+}
+
+float bandAverage(int from, int to) {  // pasma [from, to)
+  if (curState != State::Playing) return 0;
+  float sum = 0;
+  for (int b = from; b < to; b++) sum += spectrum[b];
+  return sum / max(1, to - from);
+}
+
+void updateSpectrum() {
+  organ[0].update(bandAverage(0, 3), 30);   // ok. 90–600 Hz
+  organ[1].update(bandAverage(3, 8), 30);   // ok. 0,7–3,8 kHz
+  organ[2].update(bandAverage(8, 13), 30);  // ok. 3,9–14 kHz
+  for (int i = 0; i < ledCount; i++) {
+    int from = i * 14 / ledCount;  // pasmo 15 (18 kHz) prawie puste, pomijamy
+    specLed[i].update(bandAverage(from, max(from + 1, (i + 1) * 14 / ledCount)), 30);
+  }
+}
+
 void updateMusic(uint32_t t) {
   float in = curState == State::Playing ? vuInput : 0;
-  float lin = in * in / 255.0f;
-  musFloor = lin < musFloor ? lin : musFloor + (lin - musFloor) * 0.02f;  // ok. 1,5 s w górę
-  musCeil = lin > musCeil ? lin : musCeil + (lin - musCeil) * 0.005f;     // ok. 6 s w dół
-  float level = constrain((lin - musFloor) / max(musCeil - musFloor, 24.0f), 0.0f, 1.0f);
-  musLevel = level > musLevel ? level : musLevel * 0.85f + level * 0.15f;
+  float level = music.update(in * in / 255.0f, 24.0f);
   // Uderzenie: skok powyżej 70% zakresu po spadku poniżej 35%, nie częściej niż co 180 ms.
   beat = false;
   if (level < 0.35f) {
@@ -111,7 +167,7 @@ void updateMusic(uint32_t t) {
 }
 
 void renderVu() {
-  float lit = musLevel * ledCount;
+  float lit = music.level * ledCount;
   for (int i = 0; i < ledCount; i++) {
     float k = constrain(lit - i, 0.0f, 1.0f);
     uint16_t h = 21845 - 21845 * i / max(1, ledCount - 1);  // zielony -> czerwony
@@ -169,17 +225,75 @@ void renderPulse() {
     pulseHue += 9000;
   }
   pulse *= 0.88f;
-  fill(hue(pulseHue, 0.05f + 0.95f * max(pulse, musLevel * 0.4f)));
+  fill(hue(pulseHue, 0.05f + 0.95f * max(pulse, music.level * 0.4f)));
 }
 
 void renderDisco() {
   if (beat)
     for (int i = 0; i < ledCount; i++) discoHue[i] = random(65536);
-  for (int i = 0; i < ledCount; i++) strip->setPixelColor(i, hue(discoHue[i], 0.2f + 0.8f * musLevel));
+  for (int i = 0; i < ledCount; i++) strip->setPixelColor(i, hue(discoHue[i], 0.2f + 0.8f * music.level));
 }
 
-void renderMode(uint32_t t) {
-  switch (curMode) {
+// Jak żarówki w dawnym kolorofonie: czerwone, zielone i niebieskie na przemian.
+void renderColorOrgan() {
+  static const uint32_t lamps[3] = {0xFF0000, 0x00FF00, 0x0000FF};
+  for (int i = 0; i < ledCount; i++) {
+    float k = organ[i % 3].level;
+    strip->setPixelColor(i, scale(lamps[i % 3], 0.02f + 0.98f * k * k));
+  }
+}
+
+void renderSpectrum() {
+  for (int i = 0; i < ledCount; i++) {
+    uint16_t h = 52000L * i / max(1, ledCount - 1);  // bas czerwony ... wysokie fioletowe
+    strip->setPixelColor(i, hue(h, specLed[i].level));
+  }
+}
+
+void renderConfetti() {
+  if (random(3) == 0) {
+    int i = random(ledCount);
+    confettiHue[i] = random(65536);
+    confettiK[i] = 1.0f;
+  }
+  for (int i = 0; i < ledCount; i++) {
+    confettiK[i] *= 0.9f;
+    strip->setPixelColor(i, hue(confettiHue[i], confettiK[i]));
+  }
+}
+
+void renderAurora(uint32_t t) {
+  float s = t / 1000.0f;
+  for (int i = 0; i < ledCount; i++) {
+    uint16_t h = 34000 + 12000 * sinf(s * 0.35f + i * 0.9f);  // zieleń ... fiolet
+    float k = (0.5f + 0.5f * sinf(s * 0.6f + i * 1.7f)) * (0.5f + 0.5f * sinf(s * 0.37f - i * 0.6f));
+    strip->setPixelColor(i, hue(h, 0.1f + 0.9f * k));
+  }
+}
+
+void renderBounce(uint32_t t) {
+  float p = (float)(t % 1800) / 1800;
+  float pos = (p < 0.5f ? p * 2 : 2 - p * 2) * (ledCount - 1);
+  for (int i = 0; i < ledCount; i++)
+    strip->setPixelColor(i, hue(t * 6, max(0.0f, 1.0f - fabsf(i - pos) / 1.5f)));
+}
+
+void renderTwins(uint32_t t) {
+  fill(0);
+  float head = (float)(t % 2000) / 2000 * ledCount;
+  uint16_t h = t * 10;
+  for (int i = 0; i < ledCount; i++) {
+    float d1 = head - i;  // kometa zgodnie z numeracją diod
+    if (d1 < 0) d1 += ledCount;
+    float d2 = i - (ledCount - head);  // i druga w przeciwną stronę
+    if (d2 < 0) d2 += ledCount;
+    if (d1 < 3.0f) addPixel(i, hue(h, 1.0f - d1 / 3.0f));
+    if (d2 < 3.0f) addPixel(i, hue(h + 32768, 1.0f - d2 / 3.0f));
+  }
+}
+
+void renderEffect(Mode m, uint32_t t) {
+  switch (m) {
     case Mode::Off: fill(0); break;
     case Mode::Status:
       if (curState == State::Playing) {
@@ -203,12 +317,53 @@ void renderMode(uint32_t t) {
     case Mode::Wave: renderWave(t); break;
     case Mode::Pulse: renderPulse(); break;
     case Mode::Disco: renderDisco(); break;
+    case Mode::ColorOrgan: renderColorOrgan(); break;
+    case Mode::Spectrum: renderSpectrum(); break;
+    case Mode::Confetti: renderConfetti(); break;
+    case Mode::Aurora: renderAurora(t); break;
+    case Mode::Bounce: renderBounce(t); break;
+    case Mode::Twins: renderTwins(t); break;
     default: fill(0);
   }
 }
 
+void renderAuto(uint32_t t) {
+  if (!autoRunning) {
+    autoRunning = true;
+    autoPrev = -1;
+    autoStartMs = t;
+  }
+  if (t - autoStartMs >= autoSec * 1000UL) {
+    autoPrev = autoIdx;
+    autoIdx = (autoIdx + 1) % AUTO_COUNT;
+    autoStartMs = t;
+  }
+  uint32_t e = t - autoStartMs;
+  if (autoPrev < 0 || e >= AUTO_FADE_MS) return renderEffect(AUTO_LIST[autoIdx], t);
+  // Przejście: poprzedni efekt gaśnie, następny się rozjaśnia.
+  uint32_t from[MAX_LEDS];
+  renderEffect(AUTO_LIST[autoPrev], t);
+  for (int i = 0; i < ledCount; i++) from[i] = strip->getPixelColor(i);
+  renderEffect(AUTO_LIST[autoIdx], t);
+  float a = (float)e / AUTO_FADE_MS;
+  for (int i = 0; i < ledCount; i++) {
+    uint32_t to = strip->getPixelColor(i);
+    auto mix = [&](int shift) {
+      return (uint8_t)(((from[i] >> shift) & 0xFF) * (1 - a) + ((to >> shift) & 0xFF) * a);
+    };
+    strip->setPixelColor(i, mix(16), mix(8), mix(0));
+  }
+}
+
+void renderMode(uint32_t t) {
+  if (curMode == Mode::Auto) return renderAuto(t);
+  autoRunning = false;
+  renderEffect(curMode, t);
+}
+
 void render(uint32_t t) {
   updateMusic(t);
+  updateSpectrum();
   if (renderBoot(t)) return;
   if (curMode == Mode::Off) return fill(0);
 
@@ -241,7 +396,9 @@ void task(void*) {
 
 const char* modeId(Mode m) { return MODE_IDS[(int)m < (int)Mode::Count ? (int)m : 0]; }
 
-bool usesMusic(Mode m) { return m == Mode::Vu || m == Mode::Pulse || m == Mode::Disco; }
+bool usesVu(Mode m) { return m == Mode::Vu || m == Mode::Pulse || m == Mode::Disco || m == Mode::Auto; }
+bool usesSpectrum(Mode m) { return m == Mode::ColorOrgan || m == Mode::Spectrum || m == Mode::Auto; }
+Mode currentEffect() { return curMode == Mode::Auto ? AUTO_LIST[autoIdx] : (Mode)curMode; }
 
 bool modeFromId(const String& id, Mode& out) {
   for (int i = 0; i < (int)Mode::Count; i++) {
@@ -273,7 +430,12 @@ uint8_t brightness() { return curBrightness; }
 void setDarkWhilePlaying(bool on) { darkPlaying = on; }
 bool darkWhilePlaying() { return darkPlaying; }
 void setState(State s) { curState = s; }
+void setAutoSeconds(uint8_t s) { autoSec = constrain(s, 5, 120); }
+uint8_t autoSeconds() { return autoSec; }
 void setVuLevel(uint8_t level) { vuInput = level; }
+void setSpectrum(const std::vector<uint32_t>& bands) {
+  for (int b = 0; b < SPECTRUM_BANDS && b < (int)bands.size(); b++) spectrum[b] = min<uint32_t>(bands[b], 255);
+}
 void setBatteryPercent(int percent) { batteryPercent = percent; }
 
 }  // namespace leds

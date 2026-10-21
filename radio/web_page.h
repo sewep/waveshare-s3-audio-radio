@@ -90,7 +90,7 @@ code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding
   <div class="card">
     <h2>Zapowiedź numeru</h2>
     <label class="row"><input type="checkbox" id="announce"> Wypowiadaj numer stacji przy starcie i przy zmianie stacji</label>
-    <p class="muted">Nagrania liczebników od 1 do 40 są zapisane w radiu i działają bez internetu.</p>
+    <p class="muted">Nagrania liczebników od 1 do 40 są zapisane w radiu i działają bez internetu. Stacje od 41. (lista mieści 99) grają bez zapowiedzi.</p>
   </div>
   <div class="card">
     <form id="add">
@@ -113,6 +113,7 @@ code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding
     <h2>Tryb</h2>
     <div class="chips" id="modes"></div>
     <p class="muted" id="modeDesc"></p>
+    <div class="row" id="autoRow"><span class="muted">Zmiana co</span><input type="range" id="ledAuto" min="5" max="60"><span id="ledAutov"></span></div>
     <label class="row"><input type="checkbox" id="ledDark"> Wygaszaj diody, gdy gra muzyka</label>
     <p class="muted">Ładowanie stacji, Wi-Fi, bateria i stop dalej są sygnalizowane. To samo przełącza przytrzymanie Key2.</p>
   </div>
@@ -122,7 +123,7 @@ code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding
       <span class="muted">Kolor</span><input type="color" id="ledColor">
       <span class="muted">Jasność</span><input type="range" id="ledBright" min="5" max="255">
     </div>
-    <p class="muted">Kolor dotyczy trybów Stały kolor, Oddech, Kometa, Fala i Iskry. Jasność dotyczy wszystkich trybów.</p>
+    <p class="muted">Kolor dotyczy trybów Stały kolor, Oddech, Kometa, Fala i Iskry (także w pokazie). Jasność dotyczy wszystkich trybów.</p>
   </div>
   <div class="card">
     <h2>Sygnały specjalne</h2>
@@ -195,7 +196,14 @@ const MODES=[
   ['wave','Fala','Fala światła w wybranym kolorze krąży po pierścieniu.'],
   ['sparkle','Iskry','Losowe diody rozbłyskują wybranym kolorem na przygaszonym tle.'],
   ['fire','Ogień','Migoczące płomienie, od czerwieni do żółci.'],
-  ['police','Policja','Naprzemienne podwójne błyski: czerwone z jednej strony, niebieskie z drugiej.']];
+  ['police','Policja','Naprzemienne podwójne błyski: czerwone z jednej strony, niebieskie z drugiej.'],
+  ['colororgan','Kolorofon','Jak dawny kolorofon: czerwone diody grają bas, zielone średnie tony, niebieskie wysokie.'],
+  ['spectrum','Widmo','Analizator widma: każda dioda to inne pasmo, od basu (czerwona) do wysokich (fioletowa).'],
+  ['confetti','Konfetti','Losowe diody rozbłyskują losowymi kolorami i powoli gasną.'],
+  ['aurora','Zorza','Płynące zielenie, błękity i fiolety jak zorza polarna.'],
+  ['bounce','Piłka','Świetlna kula odbija się tam i z powrotem, zmieniając kolor.'],
+  ['twins','Dwie komety','Dwie komety w dopełniających się kolorach krążą w przeciwne strony.'],
+  ['auto','Pokaz','Efekty zmieniają się same, kolejno, z płynnym przejściem.']];
 
 function showTab(){
   let id=(location.hash||'#radio').slice(1);
@@ -236,7 +244,10 @@ function render(){
   if(st.led){
     const md=MODES.find(x=>x[0]===st.led.mode);
     document.querySelectorAll('#modes button').forEach(b=>b.classList.toggle('on',b.dataset.m===st.led.mode));
-    $('modeDesc').textContent=md?md[2]:'';
+    const now=MODES.find(x=>x[0]===st.led.now);
+    $('modeDesc').textContent=(md?md[2]:'')+(st.led.mode==='auto'&&now?` Teraz: ${now[1]}.`:'');
+    $('autoRow').style.display=st.led.mode==='auto'?'':'none';
+    if(document.activeElement!==$('ledAuto')){$('ledAuto').value=st.led.auto;$('ledAutov').textContent=st.led.auto+' s'}
     if(document.activeElement!==$('ledColor'))$('ledColor').value=st.led.color;
     if(document.activeElement!==$('ledBright'))$('ledBright').value=st.led.brightness;
     $('ledDark').checked=!!st.led.dark;
@@ -262,6 +273,8 @@ MODES.forEach(([m,label])=>{const b=document.createElement('button');b.dataset.m
   b.onclick=()=>post('/api/led',{mode:m}).then(status);$('modes').append(b)});
 $('ledColor').onchange=e=>post('/api/led',{color:e.target.value}).then(status);
 $('ledBright').onchange=e=>post('/api/led',{brightness:e.target.value}).then(status);
+$('ledAuto').oninput=e=>$('ledAutov').textContent=e.target.value+' s';
+$('ledAuto').onchange=e=>post('/api/led',{auto:e.target.value}).then(status);
 $('ledDark').onchange=e=>post('/api/led',{dark:e.target.checked?1:0}).then(status);
 load().then(status);setInterval(status,3000);
 </script></body></html>)HTML";

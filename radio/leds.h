@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#include <vector>
 
 // Diody WS2812 na płytce. Animacje liczy osobne zadanie FreeRTOS, więc działają też wtedy,
 // gdy pętla główna czeka (łączenie z Wi-Fi, otwieranie strumienia).
@@ -21,6 +22,13 @@ enum class Mode : uint8_t {
   Wave,          // fala jasności krążąca w wybranym kolorze
   Pulse,         // błysk całego pierścienia na każde uderzenie, co uderzenie inny kolor
   Disco,         // na każde uderzenie diody losują nowe kolory
+  ColorOrgan,    // kolorofon: bas czerwony, średnie zielone, wysokie niebieskie (widmo z FFT)
+  Spectrum,      // analizator widma: każda dioda to inne pasmo, od basu do wysokich
+  Confetti,      // losowe kolorowe rozbłyski
+  Aurora,        // zorza: płynące zielenie, błękity i fiolety
+  Bounce,        // kula odbijająca się tam i z powrotem
+  Twins,         // dwie komety w przeciwnych kierunkach
+  Auto,          // pokaz: kolejne efekty co autoSeconds() sekund, z płynnym przejściem
   Count
 };
 
@@ -30,7 +38,11 @@ enum class Mode : uint8_t {
 enum class State : uint8_t { Connecting, Setup, Stopped, Loading, Trouble, Playing };
 
 const char* modeId(Mode m);
-bool usesMusic(Mode m);  // tryb potrzebuje poziomu głośności z biblioteki audio
+// Czego tryb potrzebuje od biblioteki audio (liczenie poziomu i FFT tylko wtedy, gdy trzeba).
+bool usesVu(Mode m);
+bool usesSpectrum(Mode m);
+// Efekt grany teraz w pokazie (Mode::Auto); w innych trybach to po prostu mode().
+Mode currentEffect();
 bool modeFromId(const String& id, Mode& out);
 
 // Startuje zadanie animacji; od razu leci animacja startowa.
@@ -48,7 +60,11 @@ void setDarkWhilePlaying(bool on);
 bool darkWhilePlaying();
 
 void setState(State s);
+void setAutoSeconds(uint8_t s);  // czas jednego efektu w pokazie, 5..120 s
+uint8_t autoSeconds();
+
 void setVuLevel(uint8_t level);       // 0..255, z biblioteki audio
+void setSpectrum(const std::vector<uint32_t>& bands);  // 15 pasm 0..255, z biblioteki audio
 void setBatteryPercent(int percent);  // -1 = nieznany
 
 }  // namespace leds
