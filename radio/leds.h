@@ -33,6 +33,10 @@ uint32_t color();
 void setBrightness(uint8_t b);
 uint8_t brightness();
 
+// Wygaszenie diod tylko na czas grania muzyki; ładowanie, Wi-Fi, bateria i stop dalej świecą.
+void setDarkWhilePlaying(bool on);
+bool darkWhilePlaying();
+
 void setState(State s);
 void setVuLevel(uint8_t level);       // 0..255, z biblioteki audio
 void setBatteryPercent(int percent);  // -1 = nieznany

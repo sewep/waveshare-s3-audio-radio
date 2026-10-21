@@ -23,6 +23,7 @@ volatile uint8_t curBrightness = 60;
 volatile State curState = State::Connecting;
 volatile uint8_t vuInput = 0;
 volatile int batteryPercent = -1;
+volatile bool darkPlaying = false;
 bool lowBattery = false;
 
 // VU: wygładzony poziom i ruchomy „sufit”, żeby pierścień reagował przy każdej głośności.
@@ -124,6 +125,7 @@ void render(uint32_t t) {
     case State::Connecting:
     case State::Loading: return comet(t, 0x0040FF, 1000);
     case State::Setup: return fill(scale(0x0040FF, 0.1f + 0.9f * wave(t, 2000)));
+    case State::Playing: return darkPlaying ? fill(0) : renderMode(t);
     default: return renderMode(t);
   }
 }
@@ -166,6 +168,8 @@ void setColor(uint32_t rgb) { curColor = rgb & 0xFFFFFF; }
 uint32_t color() { return curColor; }
 void setBrightness(uint8_t b) { curBrightness = b; }
 uint8_t brightness() { return curBrightness; }
+void setDarkWhilePlaying(bool on) { darkPlaying = on; }
+bool darkWhilePlaying() { return darkPlaying; }
 void setState(State s) { curState = s; }
 void setVuLevel(uint8_t level) { vuInput = level; }
 void setBatteryPercent(int percent) { batteryPercent = percent; }

@@ -78,7 +78,7 @@ code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding
 <section data-tab="stacje">
   <div class="card">
     <h2>Lista stacji</h2>
-    <p class="muted">Numer stacji to jej miejsce na liście; w tej kolejności przełącza Key3.</p>
+    <p class="muted">Numer stacji to jej miejsce na liście; w tej kolejności przełączają przytrzymane Key1 i Key3.</p>
     <ul id="manage"></ul>
   </div>
   <div class="card">
@@ -102,6 +102,8 @@ code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding
     <h2>Tryb</h2>
     <div class="chips" id="modes"></div>
     <p class="muted" id="modeDesc"></p>
+    <label class="row"><input type="checkbox" id="ledDark"> Wygaszaj diody, gdy gra muzyka</label>
+    <p class="muted">Ładowanie stacji, Wi-Fi, bateria i stop dalej są sygnalizowane. To samo przełącza przytrzymanie Key2.</p>
   </div>
   <div class="card">
     <h2>Kolor i jasność</h2>
@@ -129,18 +131,19 @@ code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding
     <h2>Przyciski na płytce</h2>
     <table>
       <tr><th>Przycisk</th><th>Krótko</th><th>Przytrzymanie</th></tr>
-      <tr><td>Key1</td><td>Głośniej</td><td>Ściszanie, dopóki trzymasz</td></tr>
-      <tr><td>Key2</td><td>Graj / stop</td><td>—</td></tr>
-      <tr><td>Key3</td><td>Następna stacja</td><td>Poprzednia stacja (ok. 1 s)</td></tr>
+      <tr><td>Key1</td><td>Ciszej</td><td>Poprzednia stacja</td></tr>
+      <tr><td>Key2</td><td>Graj / stop</td><td>Wygaś / przywróć diody na czas grania</td></tr>
+      <tr><td>Key3</td><td>Głośniej</td><td>Następna stacja</td></tr>
       <tr><td>BOOT</td><td>Graj / stop</td><td>3 s: zapomnij Wi-Fi i uruchom konfigurację</td></tr>
       <tr><td>RESET</td><td colspan="2">Restart radia (ustawienia zostają)</td></tr>
     </table>
+    <p class="muted">Układ jak w słuchawkach Bluetooth: środkowy przycisk graj/stop, zewnętrzne krótko zmieniają głośność, a przytrzymane (ok. 1 s) zmieniają stację.</p>
   </div>
   <div class="card">
     <h2>Jak korzystać</h2>
     <ul class="dots">
       <li>Kliknij stację na liście, żeby jej słuchać. Radio pamięta ostatnią stację i głośność, a po włączeniu zasilania samo zaczyna grać.</li>
-      <li>Przy starcie i każdej zmianie stacji radio mówi jej numer z listy, więc przełączając przyciskiem Key3 wiesz, gdzie jesteś. Zapowiedź wyłączysz w zakładce Stacje.</li>
+      <li>Przy starcie i każdej zmianie stacji radio mówi jej numer z listy, więc przełączając przyciskami wiesz, gdzie jesteś. Zapowiedź wyłączysz w zakładce Stacje.</li>
       <li>Strona działa na każdym urządzeniu w tej samej sieci pod adresem <code>http://radio.local</code>. Jeśli adres się nie otwiera, użyj numeru IP z sekcji poniżej albo rozłącz VPN.</li>
       <li>Gdy strumień się urwie, radio po kilku sekundach samo połączy się ponownie.</li>
       <li>Zmiany zrobione przyciskami pojawiają się na stronie po kilku sekundach.</li>
@@ -217,6 +220,7 @@ function render(){
     $('modeDesc').textContent=md?md[2]:'';
     if(document.activeElement!==$('ledColor'))$('ledColor').value=st.led.color;
     if(document.activeElement!==$('ledBright'))$('ledBright').value=st.led.brightness;
+    $('ledDark').checked=!!st.led.dark;
   }
 
   const rows=[['Adres',st.host?`http://${st.host}`:'—'],['IP',st.ip||'—'],['Wi-Fi',st.rssi!==undefined?`${st.rssi} dBm`+(st.rssi>-67?' (dobry)':st.rssi>-75?' (średni)':' (słaby)'):'—'],
@@ -238,6 +242,7 @@ MODES.forEach(([m,label])=>{const b=document.createElement('button');b.dataset.m
   b.onclick=()=>post('/api/led',{mode:m}).then(status);$('modes').append(b)});
 $('ledColor').onchange=e=>post('/api/led',{color:e.target.value}).then(status);
 $('ledBright').onchange=e=>post('/api/led',{brightness:e.target.value}).then(status);
+$('ledDark').onchange=e=>post('/api/led',{dark:e.target.checked?1:0}).then(status);
 load().then(status);setInterval(status,3000);
 </script></body></html>)HTML";
 

@@ -1,10 +1,10 @@
 // Radio internetowe na Waveshare ESP32-S3-AUDIO-Board.
 // Sterowanie przez przeglądarkę: http://radio.local
 //
-// Przyciski:
-//   Key1  krótko = głośniej, przytrzymanie = ściszanie (powtarza, dopóki trzymasz)
-//   Key2  graj/stop
-//   Key3  krótko = następna stacja, przytrzymanie = poprzednia
+// Przyciski (jak w słuchawkach Bluetooth):
+//   Key1  krótko = ciszej,  przytrzymanie = poprzednia stacja
+//   Key2  krótko = graj/stop, przytrzymanie = wygaś/przywróć diody na czas grania
+//   Key3  krótko = głośniej, przytrzymanie = następna stacja
 //   BOOT  krótko = graj/stop, przytrzymanie 3 s = zapomnij Wi-Fi i uruchom konfigurację
 // Przy starcie i zmianie stacji radio wypowiada jej numer (nagrania 1..40 wbudowane w firmware,
 // przy starcie zapisywane na partycję FFat). Od wybrania stacji do pierwszych dźwięków
@@ -109,6 +109,12 @@ void saveLeds() {
   prefs.putUChar("ledMode", (uint8_t)leds::mode());
   prefs.putUInt("ledColor", leds::color());
   prefs.putUChar("ledBright", leds::brightness());
+}
+
+void setLedsDarkWhilePlaying(bool on) {
+  leds::setDarkWhilePlaying(on);
+  prefs.putBool("ledDark", on);
+  Serial.printf("Diody podczas grania: %s\n", on ? "wygaszone" : "włączone");
 }
 
 void applyLedMode(leds::Mode m) {
@@ -261,7 +267,8 @@ String ledJson() {
   char color[8];
   snprintf(color, sizeof(color), "#%06lx", (unsigned long)leds::color());
   return String(",\"led\":{\"mode\":\"") + leds::modeId(leds::mode()) + "\",\"color\":\"" + color +
-         "\",\"brightness\":" + leds::brightness() + "}";
+         "\",\"brightness\":" + leds::brightness() +
+         ",\"dark\":" + (leds::darkWhilePlaying() ? "true" : "false") + "}";
 }
 
 void handleStatus() {
@@ -291,6 +298,7 @@ void handleLed() {
     leds::setColor(strtoul(c.c_str(), nullptr, 16));
   }
   if (server.hasArg("brightness")) leds::setBrightness(constrain(server.arg("brightness").toInt(), 0, 255));
+  if (server.hasArg("dark")) setLedsDarkWhilePlaying(server.arg("dark") == "1");
   saveLeds();
   sendOk();
 }
@@ -463,7 +471,8 @@ struct Button {
 };
 
 Button bootButton(WIFI_RESET_PRESS_MS);
-Button key1(500, 200);
+// Układ jak w słuchawkach Bluetooth: zewnętrzne krótko = głośność, długo = stacja.
+Button key1(800);
 Button key2(1000);
 Button key3(800);
 
@@ -500,15 +509,18 @@ void handleButtons() {
   uint8_t keys = board::readKeys();
 
   switch (key1.update(keys & board::KEY1, now)) {
-    case ButtonEvent::Click: changeVolume(+1); break;
-    case ButtonEvent::LongPress:
-    case ButtonEvent::Repeat: changeVolume(-1); break;
+    case ButtonEvent::Click: changeVolume(-1); break;
+    case ButtonEvent::LongPress: switchStation(-1); break;
     default: break;
   }
-  if (key2.update(keys & board::KEY2, now) == ButtonEvent::Click) togglePlay();
+  switch (key2.update(keys & board::KEY2, now)) {
+    case ButtonEvent::Click: togglePlay(); break;
+    case ButtonEvent::LongPress: setLedsDarkWhilePlaying(!leds::darkWhilePlaying()); break;
+    default: break;
+  }
   switch (key3.update(keys & board::KEY3, now)) {
-    case ButtonEvent::Click: switchStation(+1); break;
-    case ButtonEvent::LongPress: switchStation(-1); break;
+    case ButtonEvent::Click: changeVolume(+1); break;
+    case ButtonEvent::LongPress: switchStation(+1); break;
     default: break;
   }
 }
@@ -546,6 +558,7 @@ void setup() {
   leds::begin(board::LED_PIN, board::LED_COUNT);  // od razu animacja startowa
   leds::setColor(prefs.getUInt("ledColor", 0xFF6A00));
   leds::setBrightness(prefs.getUChar("ledBright", 60));
+  leds::setDarkWhilePlaying(prefs.getBool("ledDark", false));
   uint8_t ledMode = prefs.getUChar("ledMode", (uint8_t)leds::Mode::Rainbow);
   applyLedMode(ledMode < (uint8_t)leds::Mode::Count ? (leds::Mode)ledMode : leds::Mode::Rainbow);
   leds::setState(leds::State::Connecting);
