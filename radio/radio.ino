@@ -5,7 +5,7 @@
 //   Key1  krótko = ciszej,  przytrzymanie = poprzednia stacja
 //   Key2  krótko = graj/stop, przytrzymanie = wygaś/przywróć diody na czas grania
 //   Key3  krótko = głośniej, przytrzymanie = następna stacja
-//   BOOT  krótko = graj/stop, przytrzymanie 3 s = tryb konfiguracji Wi-Fi (zapisane sieci zostają),
+//   BOOT  krótko = następny tryb diod, przytrzymanie 3 s = tryb konfiguracji Wi-Fi (zapisane sieci zostają),
 //         w trybie konfiguracji przytrzymanie 3 s = powrót bez zmian
 // Przy starcie i zmianie stacji radio wypowiada jej numer (nagrania 1..40 wbudowane w firmware,
 // przy starcie zapisywane na partycję FFat; stacje 41..99 grają bez zapowiedzi). Od wybrania stacji do pierwszych dźwięków
@@ -1065,6 +1065,29 @@ Button key3(800);
 
 void togglePlay() { playing ? stop() : play(currentStation); }
 
+// Kolejność trybów jak na stronie (zakładka Światło), a nie jak w enum Mode, do którego nowe
+// tryby dopisuje się na końcu.
+static const leds::Mode LED_MODE_CYCLE[] = {
+    leds::Mode::Off,     leds::Mode::Status,       leds::Mode::Color,    leds::Mode::Breathe,
+    leds::Mode::Rainbow, leds::Mode::Comet,        leds::Mode::Vu,       leds::Mode::Pulse,
+    leds::Mode::Disco,   leds::Mode::RainbowComet, leds::Mode::Wave,     leds::Mode::Sparkle,
+    leds::Mode::Fire,    leds::Mode::Police,       leds::Mode::ColorOrgan, leds::Mode::Spectrum,
+    leds::Mode::Confetti, leds::Mode::Aurora,      leds::Mode::Bounce,   leds::Mode::Twins,
+    leds::Mode::Auto};
+static_assert(sizeof(LED_MODE_CYCLE) / sizeof(LED_MODE_CYCLE[0]) == (size_t)leds::Mode::Count,
+              "LED_MODE_CYCLE musi mieć każdy tryb");
+
+void nextLedMode() {
+  int n = sizeof(LED_MODE_CYCLE) / sizeof(LED_MODE_CYCLE[0]), i = 0;
+  while (i < n && LED_MODE_CYCLE[i] != leds::mode()) i++;
+  leds::Mode m = LED_MODE_CYCLE[(i + 1) % n];
+  applyLedMode(m);
+  // Zmiana trybu przyciskiem ma być widać, więc zdejmuje wygaszenie na czas grania.
+  if (leds::darkWhilePlaying()) setLedsDarkWhilePlaying(false);
+  saveLeds();
+  Serial.printf("Tryb diod: %s\n", leds::modeId(m));
+}
+
 void changeVolume(int delta) {
   setVolume(volume + delta);
   Serial.printf("Głośność: %u\n", volume);
@@ -1092,7 +1115,7 @@ void handleButtons() {
     ESP.restart();
   }
   if (apMode) return;
-  if (boot == ButtonEvent::Click) togglePlay();
+  if (boot == ButtonEvent::Click) nextLedMode();
 
   static uint32_t lastPoll = 0;
   if (now - lastPoll < KEY_POLL_MS) return;

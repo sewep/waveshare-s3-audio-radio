@@ -270,6 +270,7 @@ body.ap nav,body.ap .sta{display:none}
     <div class="row" id="autoRow"><span class="muted">Zmiana co</span><input type="range" id="ledAuto" min="5" max="60"><span id="ledAutov"></span></div>
     <label class="row"><input type="checkbox" id="ledDark"> Wygaszaj diody, gdy gra muzyka</label>
     <p class="muted">Ładowanie stacji, Wi-Fi, bateria i stop dalej są sygnalizowane. To samo przełącza przytrzymanie Key2.</p>
+    <p class="muted">Krótkie naciśnięcie BOOT na płytce włącza następny tryb z listy (i zdejmuje wygaszanie, żeby zmianę było widać).</p>
   </div>
   <div class="card">
     <h2>Kolor i jasność</h2>
@@ -374,7 +375,7 @@ body.ap nav,body.ap .sta{display:none}
       <tr><td>Key1</td><td>Ciszej</td><td>Poprzednia stacja</td></tr>
       <tr><td>Key2</td><td>Graj / stop</td><td>Wygaś / przywróć diody na czas grania</td></tr>
       <tr><td>Key3</td><td>Głośniej</td><td>Następna stacja</td></tr>
-      <tr><td>BOOT</td><td>Graj / stop</td><td>3 s: tryb konfiguracji Wi-Fi (zapisane sieci zostają); w nim 3 s: powrót bez zmian</td></tr>
+      <tr><td>BOOT</td><td>Następny tryb diod (jak na liście w zakładce Światło)</td><td>3 s: tryb konfiguracji Wi-Fi (zapisane sieci zostają); w nim 3 s: powrót bez zmian</td></tr>
       <tr><td>RESET</td><td colspan="2">Restart radia (ustawienia zostają)</td></tr>
     </table>
     <p class="muted">Układ jak w słuchawkach Bluetooth: środkowy przycisk graj/stop, zewnętrzne krótko zmieniają głośność, a przytrzymane (ok. 1 s) zmieniają stację.</p>
