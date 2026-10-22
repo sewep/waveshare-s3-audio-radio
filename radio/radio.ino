@@ -503,9 +503,29 @@ void audio_process_i2s(int32_t* buff, int16_t validSamples, bool* continueI2S) {
   }
 }
 
+// Najdłuższy czas z ostatnich 5–10 s (w µs), do diagnozy zacinania w zakładce Stan.
+struct MaxWindow {
+  volatile uint32_t cur = 0, prev = 0, startMs = 0;
+  void add(uint32_t us) {
+    if (millis() - startMs > 5000) {
+      prev = cur;
+      cur = 0;
+      startMs = millis();
+    }
+    if (us > cur) cur = us;
+  }
+  uint32_t value() const { return max(cur, prev); }
+};
+MaxWindow audioGap, audioLoopTime, mainLoopTime, webTime;
+// Bufor DMA biblioteki to 16 × 256 ramek = ok. 85 ms; dłuższa przerwa zadania audio = słyszalna dziura.
+static const uint32_t AUDIO_STALL_US = 40000;
+volatile uint16_t audioStalls = 0;      // przerwy zadania audio > 40 ms od startu
+volatile uint16_t slowStreamCount = 0;  // „slow stream” z biblioteki od startu (sieć nie nadąża)
+
 void audioTask(void*) {
   static AudioMsg batch[8];
-  uint32_t lastStats = 0;
+  uint32_t lastStats = 0, lastLoopUs = 0;
+  bool wasSteady = false;  // poprzedni obieg był zwykłym graniem
   for (;;) {
     int n = 0;
     while (n < 8 && xQueueReceive(audioQueue, &batch[n], 0) == pdTRUE) n++;
@@ -520,7 +540,22 @@ void audioTask(void*) {
         if (!playback(batch[i].cmd) || i == lastPlayback) runAudioCommand(batch[i]);
       audioBusy = false;
     }
+    uint32_t t0 = micros();
+    // Łączenie ze stacją (polecenie, ładowanie, zapowiedź) blokuje z natury na 0,4–1 s (DNS, SSL),
+    // ale wtedy stara stacja już nie gra; przestój liczy się tylko między dwoma obiegami zwykłego grania.
+    bool steady = audioRunning && !n && !loading && !announcing;
+    if (lastLoopUs) {
+      uint32_t gap = t0 - lastLoopUs;
+      audioGap.add(gap);
+      if (gap > AUDIO_STALL_US && steady && wasSteady) {
+        audioStalls++;
+        Serial.printf("Zadanie audio stało %lu ms\n", (unsigned long)(gap / 1000));
+      }
+    }
+    wasSteady = steady;
+    lastLoopUs = t0;
     audio.loop();
+    audioLoopTime.add(micros() - t0);
     audioRunning = audio.isRunning();
     if (millis() - lastStats >= STREAM_STATS_MS) {
       lastStats = millis();
@@ -620,7 +655,10 @@ void audioInfo(Audio::msg_t m) {
     loading = false;
     if (!playStartMs) playStartMs = millis();
   }
-  if (m.e == Audio::evt_info && m.msg && strcmp(m.msg, "slow stream") == 0) slowStreamMs = millis();
+  if (m.e == Audio::evt_info && m.msg && strcmp(m.msg, "slow stream") == 0) {
+    slowStreamMs = millis();
+    slowStreamCount++;
+  }
   // Biblioteka sama łączy się ponownie; do pierwszej ramki to znów ładowanie, tyle że z kłopotem.
   if (m.e == Audio::evt_info && m.msg && strcmp(m.msg, "Stream lost") == 0) {
     loading = true;
@@ -1430,7 +1468,10 @@ void handleDiag() {
           jsonField("psramSize", ESP.getPsramSize()) + jsonField("cpu", ESP.getCpuFreqMHz()) +
           jsonField("flash", ESP.getFlashChipSize()) + jsonField("fs", fsReady ? (long)FFat.usedBytes() : -1L) +
           jsonField("fsSize", fsReady ? (long)FFat.totalBytes() : -1L) + jsonField("core", ESP_ARDUINO_VERSION_STR) +
-          jsonField("sdk", ESP.getSdkVersion()) + jsonField("build", __DATE__ " " __TIME__) + "}}";
+          jsonField("sdk", ESP.getSdkVersion()) + jsonField("build", __DATE__ " " __TIME__) +
+          jsonField("audioGap", audioGap.value()) + jsonField("audioLoop", audioLoopTime.value()) +
+          jsonField("mainLoop", mainLoopTime.value()) + jsonField("web", webTime.value()) +
+          jsonField("stalls", audioStalls) + jsonField("slow", slowStreamCount) + "}}";
   server.send(200, "application/json", json);
 }
 
@@ -1929,7 +1970,9 @@ void setup() {
 }
 
 void loop() {
+  uint32_t t0 = micros();
   server.handleClient();
+  webTime.add(micros() - t0);
   if (apMode) dns.processNextRequest();
   checkSetupIdle();
   if (restartAtMs && (int32_t)(millis() - restartAtMs) >= 0) ESP.restart();
@@ -1943,5 +1986,6 @@ void loop() {
   tickSleep();
   tickScare();
   updateLeds();
+  mainLoopTime.add(micros() - t0);
   vTaskDelay(1);
 }

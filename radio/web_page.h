@@ -438,6 +438,11 @@ body.ap nav,body.ap .sta{display:none}
     <table id="dWifi"></table>
   </div>
   <div class="card">
+    <h2>Płynność</h2>
+    <table id="dPerf"></table>
+    <p class="muted">Zadanie audio dekoduje muzykę i podaje ją do głośnika; jego zapas to ok. 85 ms dźwięku w buforze wyjścia. Przestój dłuższy niż 40 ms to możliwa przerwa w dźwięku z winy procesora. „Słaby strumień” to przerwa z winy sieci: bufor wejściowy opustoszał. Najdłuższe czasy są z ostatnich 5–10 s, liczniki od startu radia.</p>
+  </div>
+  <div class="card">
     <h2>System</h2>
     <table id="dSys"></table>
   </div>
@@ -965,6 +970,10 @@ async function diag(){
   const q=['',' (słaby)',' (średni)',' (dobry)',' (bardzo dobry)'][signal(W.rssi)];
   tableRows('dWifi',[['Sieć',W.ssid||'—'],['Sygnał',`${W.rssi} dBm${q}`,bars(W.rssi)],['Kanał',String(W.channel)],['Punkt dostępu',W.bssid],
     ['IP',`${W.ip} (${W.static?'stały':'DHCP'})`],['Maska',W.mask],['Brama',W.gw],['DNS',W.dns],['MAC',W.mac],['Adres',`http://${W.host}`]]);
+  const ms=us=>(us/1000).toFixed(us<10000?1:0).replace('.',',')+' ms';
+  tableRows('dPerf',[['Zadanie audio',`najdłuższa przerwa ${ms(Y.audioGap)}, przestoje > 40 ms: ${Y.stalls}`],
+    ['Dekodowanie',`najdłużej ${ms(Y.audioLoop)} na raz`],['Słaby strumień',`${Y.slow} razy`],
+    ['Strona i przyciski',`najdłuższy obieg ${ms(Y.mainLoop)}`]]);
   tableRows('dSys',[['Czas pracy',dur(Y.uptime)],['Ostatni restart',Y.reset],['Temperatura układu',`${Y.temp.toFixed(0)} °C`],
     ['RAM wolny',`${kb(Y.heap)} (najmniej ${kb(Y.heapMin)})`],['PSRAM wolny',`${kb(Y.psram)} z ${kb(Y.psramSize)}`],
     ['FFat',Y.fs>=0?`${kb(Y.fs)} z ${kb(Y.fsSize)}`:'niezamontowany'],['Bateria',st.battery>=0?`${st.battery}%`:'pomiar niepodłączony'],
