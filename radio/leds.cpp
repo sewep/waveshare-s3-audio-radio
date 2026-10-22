@@ -35,7 +35,8 @@ volatile float sunrise = -1;  // świt budzika 0..1, -1 = wyłączony
 // Halloween: diody to oczy maski, jasne w rytm dźwięku z głośnika.
 volatile bool scareOn = false;
 volatile uint32_t scareColor = 0xFF0000;
-volatile bool scareGlow = false;  // przygaszone oczy, gdy nic nie gra
+volatile bool scareGlow = false;     // przygaszone oczy, gdy nic nie gra
+volatile bool scareResting = false;  // odpoczynek po krzyku: oczy wolno pulsują
 volatile uint8_t scareInput = 0;
 float scareLevel = 0;
 
@@ -413,7 +414,8 @@ void renderEyes(uint32_t t) {
   float in = scareInput / 255.0f;
   scareLevel = in > scareLevel ? in : scareLevel * 0.8f;
   float k = scareLevel > 0.02f ? scareLevel * (0.85f + 0.15f * random(100) / 100.0f) : 0;
-  if (scareGlow) k = max(k, 0.04f + 0.02f * wave(t, 3000));
+  if (scareResting) k = max(k, 0.03f + 0.17f * wave(t, 1600));  // wyraźnie inaczej niż żarzenie
+  else if (scareGlow) k = max(k, 0.04f + 0.02f * wave(t, 3000));
   uint32_t c = scareColor;
   fill(Adafruit_NeoPixel::Color(((c >> 16) & 0xFF) * k, ((c >> 8) & 0xFF) * k, (c & 0xFF) * k));
 }
@@ -510,6 +512,7 @@ void setScare(bool on, uint32_t rgb, bool glow) {
   scareOn = on;
 }
 void setScareLevel(uint8_t level) { scareInput = level; }
+void setScareResting(bool on) { scareResting = on; }
 void setSunrise(float progress) { sunrise = progress < 0 ? -1 : min(progress, 1.0f); }
 
 void showIndicator(uint8_t count, uint32_t rgb, uint32_t ms) {

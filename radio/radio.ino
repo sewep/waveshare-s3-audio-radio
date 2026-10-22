@@ -196,6 +196,7 @@ struct ScareConfig {
   uint32_t color = 0xFF0000;
   uint8_t cooldownSec = 10;
   bool glow = true;  // oczy żarzą się w ciszy
+  bool restPulse = true;  // oczy pulsują w odpoczynku: widać, kiedy straszak znów nasłuchuje
 };
 ScareConfig scareCfg;
 enum class ScareState : uint8_t { Off, Armed, Screaming, Cooldown, Paused, NoFile };
@@ -976,6 +977,7 @@ void saveScare() {
   prefs.putUInt("hwColor", scareCfg.color);
   prefs.putUChar("hwCool", scareCfg.cooldownSec);
   prefs.putBool("hwGlow", scareCfg.glow);
+  prefs.putBool("hwRest", scareCfg.restPulse);
 }
 
 void loadScare() {
@@ -987,6 +989,7 @@ void loadScare() {
   scareCfg.color = prefs.getUInt("hwColor", d.color) & 0xFFFFFF;
   scareCfg.cooldownSec = constrain(prefs.getUChar("hwCool", d.cooldownSec), 3, 120);
   scareCfg.glow = prefs.getBool("hwGlow", d.glow);
+  scareCfg.restPulse = prefs.getBool("hwRest", d.restPulse);
 }
 
 void applyScareLeds() { leds::setScare(scareCfg.on || scareState == ScareState::Screaming, scareCfg.color, scareCfg.glow); }
@@ -1036,6 +1039,8 @@ void setScareEnabled(bool on) {
 
 void tickScare() {
   uint32_t now = millis();
+  leds::setScareResting(scareCfg.restPulse && scareState == ScareState::Cooldown &&
+                        (int32_t)(scareCoolUntilMs - now) > 0);
   if (scareState == ScareState::Screaming) {
     if (playing) return finishScare();  // ktoś włączył radio: krzyk już przerwany
     if (scareEof && !scareEofMs) scareEofMs = now | 1;
@@ -1119,7 +1124,8 @@ String scareJson() {
   return String(",\"hw\":{\"on\":") + (scareCfg.on ? "true" : "false") + ",\"state\":\"" + STATES[(int)scareState] +
          "\",\"cool\":" + cool + ",\"count\":" + scareCount + ",\"eye\":" + scareEyePeak + ",\"thr\":" + (int)scareCfg.thresholdDb +
          ",\"vol\":" + scareCfg.volume + ",\"color\":\"" + color + "\",\"cooldown\":" + scareCfg.cooldownSec +
-         ",\"glow\":" + (scareCfg.glow ? "true" : "false") + ",\"url\":\"" + jsonEscape(scareCfg.url) +
+         ",\"glow\":" + (scareCfg.glow ? "true" : "false") + ",\"rest\":" + (scareCfg.restPulse ? "true" : "false") +
+         ",\"url\":\"" + jsonEscape(scareCfg.url) +
          "\",\"file\":" + scare::fileSize() + ",\"dl\":\"" + dl[(int)scare::downloadState()] +
          "\",\"err\":\"" + jsonEscape(scare::lastError()) + "\"}";
 }
@@ -1280,6 +1286,7 @@ void handleScare() {
   if (server.hasArg("vol")) scareCfg.volume = constrain(server.arg("vol").toInt(), 1, 21);
   if (server.hasArg("cooldown")) scareCfg.cooldownSec = constrain(server.arg("cooldown").toInt(), 3, 120);
   if (server.hasArg("glow")) scareCfg.glow = server.arg("glow") == "1";
+  if (server.hasArg("rest")) scareCfg.restPulse = server.arg("rest") == "1";
   if (server.hasArg("color")) {
     String c = server.arg("color");
     if (c.startsWith("#")) c.remove(0, 1);

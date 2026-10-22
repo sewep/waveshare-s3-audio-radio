@@ -475,7 +475,8 @@ body.ap nav,body.ap .sta{display:none}
   <div class="card">
     <h2>Oczy</h2>
     <div class="row"><span class="muted">Kolor</span><input type="color" id="hwColor"><label class="row"><input type="checkbox" id="hwGlow"> Żarzą się w ciszy</label></div>
-    <p class="muted">Diody świecą tym jaśniej, im głośniej gra głośnik, i lekko migoczą. Jasność z zakładki Światło ich nie dotyczy.</p>
+    <label class="row" style="margin-top:8px"><input type="checkbox" id="hwRest"> Pulsują podczas odpoczynku po krzyku</label>
+    <p class="muted">Diody świecą tym jaśniej, im głośniej gra głośnik, i lekko migoczą. Jasność z zakładki Światło ich nie dotyczy. Pulsowanie po krzyku trwa tyle, ile odpoczynek; gdy ustanie, straszak znów nasłuchuje.</p>
   </div>
 </section>
 
@@ -576,7 +577,10 @@ const LOOKS={
 
 function ringLook(){
   if(apMode)return[fill7('#0040ff'),'breathe'];
-  if(st.hw&&(st.hw.on||st.hw.state==='scream'))return[fill7(st.hw.state==='scream'?st.hw.color:st.hw.glow?st.hw.color+'40':DIM),st.hw.state==='scream'?'pulse':''];
+  if(st.hw&&(st.hw.on||st.hw.state==='scream')){const H=st.hw;
+    if(H.state==='scream')return[fill7(H.color),'pulse'];
+    if(H.state==='cool'&&H.rest)return[fill7(H.color),'breathe'];
+    return[fill7(H.glow?H.color+'40':DIM),''];}
   const L=st.led;if(!L||L.mode==='off')return[fill7(DIM),''];
   if(st.trouble)return[fill7('#ff5000'),'spin'];
   if(st.playing&&st.loading)return[fill7('#0040ff'),'spin'];
@@ -771,7 +775,7 @@ function renderHw(){
   if(document.activeElement!==$('hwVol')){$('hwVol').value=H.vol;$('hwVolv').textContent=H.vol}
   if(document.activeElement!==$('hwColor'))$('hwColor').value=H.color;
   if(document.activeElement!==$('hwCool'))$('hwCool').value=H.cooldown;
-  $('hwGlow').checked=H.glow;
+  $('hwGlow').checked=H.glow;$('hwRest').checked=H.rest;
   hwMark(+$('hwThr').value);
 }
 const hwMark=thr=>$('lvHw').querySelector('u').style.left=Math.max(0,Math.min(100,(thr+80)/80*100))+'%';
@@ -784,6 +788,7 @@ $('hwVol').onchange=e=>post('/api/hw',{vol:e.target.value}).then(status);
 $('hwCool').onchange=e=>post('/api/hw',{cooldown:e.target.value}).then(status);
 $('hwColor').onchange=e=>post('/api/hw',{color:e.target.value}).then(status);
 $('hwGlow').onchange=e=>post('/api/hw',{glow:e.target.checked?1:0}).then(status);
+$('hwRest').onchange=e=>post('/api/hw',{rest:e.target.checked?1:0}).then(status);
 $('hwTest').onclick=async()=>{const r=await (await post('/api/hw/test')).json();if(r.error)alert('Nie da się: '+r.error);status()};
 $('hwDl').onsubmit=async e=>{e.preventDefault();
   const r=await (await post('/api/hw/download',{url:$('hwUrl').value.trim()})).json();

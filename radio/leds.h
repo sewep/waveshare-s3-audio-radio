@@ -72,6 +72,8 @@ void setBatteryPercent(int percent);  // -1 = nieznany
 // startową i wskaźnikiem.
 void setScare(bool on, uint32_t rgb, bool glow);
 void setScareLevel(uint8_t level);
+// Odpoczynek po krzyku: oczy wolno pulsują (do ok. 20%), zamiast żarzyć się albo zgasnąć.
+void setScareResting(bool on);
 
 // Świt przed budzikiem: 0..1 rozjaśnia pierścień od czerwieni do ciepłej bieli; -1 = wyłączony.
 // Ma pierwszeństwo przed trybem i stanem (poza animacją startową i wskaźnikiem).
