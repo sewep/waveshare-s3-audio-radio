@@ -203,6 +203,7 @@ ScareState scareState = ScareState::Off;
 volatile bool scareEof = false;  // zadanie audio: plik zdekodowany do końca
 uint32_t scareStartMs = 0, scareEofMs = 0, scareCoolUntilMs = 0, scareAboveSinceMs = 0;
 uint32_t scareCount = 0;
+volatile uint8_t scareEyePeak = 0;  // najjaśniejszy błysk oczu w ostatnim krzyku, 0..255
 
 // Ostatnio grane: tytuły z metadanych strumienia, tylko w RAM. Pisze zadanie audio, czyta strona.
 struct HistoryItem {
@@ -484,8 +485,13 @@ void audio_process_i2s(int32_t* buff, int16_t validSamples, bool* continueI2S) {
   if (scareState == ScareState::Screaming) {
     float pk = 0;
     for (int i = 0; i < validSamples; i++) pk = max(pk, fabsf(buff[i] / 2147483648.0f));
-    float db = pk > 1e-6f ? 20 * log10f(pk) : -120;
-    leds::setScareLevel(constrain((db + 42) / 36, 0.0f, 1.0f) * 255);  // −42..−6 dBFS
+    // Próbki są już ściszone krzywą biblioteki (dB = −112t³ + 172t² − 60, t = głośność/21); bez
+    // jej odjęcia oczy przy cichym testowaniu (np. głośność 5 = −52 dB) w ogóle się nie zapalały.
+    float t = scareCfg.volume / 21.0f;
+    float db = pk > 1e-6f ? 20 * log10f(pk) - max(-60.0f, -112 * t * t * t + 172 * t * t - 60) : -120;
+    uint8_t eye = constrain((db + 32) / 28, 0.0f, 1.0f) * 255;  // −32..−4 dBFS pliku
+    leds::setScareLevel(eye);
+    if (eye > scareEyePeak) scareEyePeak = eye;
   }
   if (!levelsWanted()) return;
   for (int i = 0; i < validSamples; i++) {
@@ -1002,6 +1008,7 @@ bool fireScare() {
   scareEof = false;
   scareEofMs = 0;
   scareStartMs = millis();
+  scareEyePeak = 0;
   scareCount++;
   applyScareLeds();
   sendAudio(AudioCmd::Volume, "", scareCfg.volume);
@@ -1110,7 +1117,7 @@ String scareJson() {
   snprintf(color, sizeof(color), "#%06lx", (unsigned long)scareCfg.color);
   long cool = scareState == ScareState::Cooldown ? max(0L, (long)(int32_t)(scareCoolUntilMs - millis()) / 1000) : 0;
   return String(",\"hw\":{\"on\":") + (scareCfg.on ? "true" : "false") + ",\"state\":\"" + STATES[(int)scareState] +
-         "\",\"cool\":" + cool + ",\"count\":" + scareCount + ",\"thr\":" + (int)scareCfg.thresholdDb +
+         "\",\"cool\":" + cool + ",\"count\":" + scareCount + ",\"eye\":" + scareEyePeak + ",\"thr\":" + (int)scareCfg.thresholdDb +
          ",\"vol\":" + scareCfg.volume + ",\"color\":\"" + color + "\",\"cooldown\":" + scareCfg.cooldownSec +
          ",\"glow\":" + (scareCfg.glow ? "true" : "false") + ",\"url\":\"" + jsonEscape(scareCfg.url) +
          "\",\"file\":" + scare::fileSize() + ",\"dl\":\"" + dl[(int)scare::downloadState()] +

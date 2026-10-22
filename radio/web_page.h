@@ -764,7 +764,7 @@ function renderHw(){
   const H=st.hw;if(!H)return;
   $('hwOn').checked=H.on;
   $('hwState').textContent=H.state==='cool'?`Odpoczywa jeszcze ${H.cool} s.`:H.state==='nofile'?(H.dl==='busy'?'Pobiera plik…':'Brak pliku z dźwiękiem: dodaj go niżej.'):HW_STATES[H.state]||'';
-  $('hwCount').textContent=H.count?`Krzyki od włączenia radia: ${H.count}`:'';
+  $('hwCount').textContent=H.count?`Krzyki od włączenia radia: ${H.count}, oczy w ostatnim najjaśniej ${Math.round(H.eye/2.55)}%`:'';
   $('hwFile').textContent=H.dl==='busy'?'Pobieranie…':H.dl==='error'&&H.err?`Nie udało się: ${H.err}.`:H.file?`Plik w radiu: ${kb(H.file)}.`:'W radiu nie ma jeszcze pliku.';
   if(!hwUrlFilled&&H.url&&document.activeElement!==$('hwUrl')){$('hwUrl').value=H.url;hwUrlFilled=true}
   if(document.activeElement!==$('hwThr')){$('hwThr').value=H.thr;$('hwThrv').textContent=H.thr+' dB'}
