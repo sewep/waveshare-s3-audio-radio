@@ -20,6 +20,8 @@
 // stacja nie zagra w 30 s, pikanie z pliku. Wyłącznik czasowy wycisza muzykę przez ostatnią minutę.
 // Dwa klaśnięcia włączają i zatrzymują radio (mics.cpp; muzyka z głośnika podnosi próg).
 // Zakładka Radio pokazuje też barwę dźwięku (filtry biblioteki) i ostatnio grane tytuły (w RAM).
+// Tryb Halloween (zakładka z dynią): gdy mikrofony usłyszą głos ponad progiem, radio gra plik
+// z FFat (pobrany z adresu albo wgrany ze strony), a diody świecą w rytm dźwięku jak oczy maski.
 // Zakładka Stan pokazuje dane strumienia, Wi-Fi i systemu oraz poziomy dźwięku: wyjście na
 // głośnik (po regulacji głośności) i oba mikrofony.
 
@@ -38,6 +40,7 @@
 #include "board.h"
 #include "leds.h"
 #include "mics.h"
+#include "scare.h"
 #include "station_numbers.h"
 #include "web_page.h"
 
@@ -68,6 +71,9 @@ static const uint32_t BEEP_REPEAT_MS = 2200;
 static const char* BEEP_FILE = "/beep2.wav";  // nowa nazwa = nowy plik po zmianie dźwięku
 static const size_t HISTORY_SIZE = 20;
 static const uint32_t CLAP_SUPPRESS_MS = 1500;  // trzask głośnika przy starcie / zatrzymaniu
+static const uint32_t SCARE_HOLD_MS = 200;       // głos musi trwać, żeby trzask czy stuk nie straszył
+static const uint32_t SCARE_TAIL_MS = 1500;      // po eof dźwięk jeszcze leci z bufora
+static const uint32_t SCARE_MAX_MS = 120000;
 
 struct Station {
   String name;
@@ -181,6 +187,23 @@ uint8_t sleepFadeVol = 255;  // ostatnia głośność wysłana przy wyciszaniu
 bool clapEnabled = false;
 uint8_t clapSensitivity = 2;
 
+// Halloween: głos przy masce = krzyk z pliku i oczy w rytm dźwięku.
+struct ScareConfig {
+  bool on = false;
+  String url;
+  int8_t thresholdDb = -45;  // średni poziom mikrofonu (100 ms), od którego głos straszy
+  uint8_t volume = 18;
+  uint32_t color = 0xFF0000;
+  uint8_t cooldownSec = 10;
+  bool glow = true;  // oczy żarzą się w ciszy
+};
+ScareConfig scareCfg;
+enum class ScareState : uint8_t { Off, Armed, Screaming, Cooldown, Paused, NoFile };
+ScareState scareState = ScareState::Off;
+volatile bool scareEof = false;  // zadanie audio: plik zdekodowany do końca
+uint32_t scareStartMs = 0, scareEofMs = 0, scareCoolUntilMs = 0, scareAboveSinceMs = 0;
+uint32_t scareCount = 0;
+
 // Ostatnio grane: tytuły z metadanych strumienia, tylko w RAM. Pisze zadanie audio, czyta strona.
 struct HistoryItem {
   time_t at;  // 0 = czas nieznany
@@ -222,6 +245,7 @@ SemaphoreHandle_t titleLock;
 String streamTitle;
 String icyName, icyDescription, icyGenre, icyUrl, streamHost;
 String playingName;          // nazwa wybranej stacji dla historii tytułów
+bool uploadResult = false;   // wynik ostatniego wgrania pliku Halloween
 uint32_t historySeq = 0;     // rośnie z każdym nowym tytułem; strona wie, kiedy pobrać listę
 
 // Liczby o strumieniu do zakładki Stan; zadanie audio odświeża je co sekundę (tylko ono
@@ -457,6 +481,12 @@ void audio_process_i2s(int32_t* buff, int16_t validSamples, bool* continueI2S) {
   static float peak = 0;
   static int count = 0;
   mics::feedOutput(buff, validSamples);
+  if (scareState == ScareState::Screaming) {
+    float pk = 0;
+    for (int i = 0; i < validSamples; i++) pk = max(pk, fabsf(buff[i] / 2147483648.0f));
+    float db = pk > 1e-6f ? 20 * log10f(pk) : -120;
+    leds::setScareLevel(constrain((db + 42) / 36, 0.0f, 1.0f) * 255);  // −42..−6 dBFS
+  }
   if (!levelsWanted()) return;
   for (int i = 0; i < validSamples; i++) {
     float s = buff[i] / 2147483648.0f;
@@ -577,6 +607,7 @@ void audioInfo(Audio::msg_t m) {
   }
   if (announcing && m.e == Audio::evt_info && m.msg && strcmp(m.msg, "stream ready") == 0) announceReady = true;
   // Koniec właśnie tej zapowiedzi (nie poprzedniej, przerwanej szybką zmianą stacji).
+  if (m.e == Audio::evt_eof && m.msg && strstr(m.msg, scare::FILE_PATH + 1)) scareEof = true;
   if (m.e == Audio::evt_eof && announcing && m.msg && strstr(m.msg, announceFile)) {
     announcing = false;
     streamPending = true;  // połączenie zleca loop()
@@ -891,6 +922,99 @@ void cycleSleep() {
   else leds::showIndicator(1, 0xFF0000, 1000);
 }
 
+// ---------- Halloween ----------
+
+void saveScare() {
+  prefs.putBool("hwOn", scareCfg.on);
+  prefPut("hwUrl", scareCfg.url);
+  prefs.putChar("hwThr", scareCfg.thresholdDb);
+  prefs.putUChar("hwVol", scareCfg.volume);
+  prefs.putUInt("hwColor", scareCfg.color);
+  prefs.putUChar("hwCool", scareCfg.cooldownSec);
+  prefs.putBool("hwGlow", scareCfg.glow);
+}
+
+void loadScare() {
+  ScareConfig d;
+  scareCfg.on = prefs.getBool("hwOn", d.on);
+  scareCfg.url = prefString("hwUrl");
+  scareCfg.thresholdDb = constrain(prefs.getChar("hwThr", d.thresholdDb), -80, -5);
+  scareCfg.volume = constrain(prefs.getUChar("hwVol", d.volume), 1, 21);
+  scareCfg.color = prefs.getUInt("hwColor", d.color) & 0xFFFFFF;
+  scareCfg.cooldownSec = constrain(prefs.getUChar("hwCool", d.cooldownSec), 3, 120);
+  scareCfg.glow = prefs.getBool("hwGlow", d.glow);
+}
+
+void applyScareLeds() { leds::setScare(scareCfg.on || scareState == ScareState::Screaming, scareCfg.color, scareCfg.glow); }
+
+// Koniec krzyku: radio wraca do swojej głośności, mikrofony odpoczywają (głośnik ich nie straszy).
+void finishScare() {
+  sendAudio(AudioCmd::Volume, "", volume);
+  leds::setScareLevel(0);
+  scareState = scareCfg.on ? ScareState::Cooldown : ScareState::Off;
+  scareCoolUntilMs = millis() + scareCfg.cooldownSec * 1000UL;
+  scareAboveSinceMs = 0;
+  applyScareLeds();
+}
+
+bool fireScare() {
+  if (!scare::fileSize() || scare::busy() || playing) return false;
+  Serial.println("Halloween: krzyk!");
+  scareState = ScareState::Screaming;
+  scareEof = false;
+  scareEofMs = 0;
+  scareStartMs = millis();
+  scareCount++;
+  applyScareLeds();
+  sendAudio(AudioCmd::Volume, "", scareCfg.volume);
+  sendAudio(AudioCmd::PlayFile, scare::FILE_PATH, 0);
+  return true;
+}
+
+void setScareEnabled(bool on) {
+  if (on == scareCfg.on) return;
+  scareCfg.on = on;
+  if (on) {
+    if (playing) stop();  // muzyka w mikrofonach straszyłaby bez przerwy
+    scareState = ScareState::Cooldown;
+    scareCoolUntilMs = millis() + 2000;  // chwila na odejście od maski
+  } else if (scareState == ScareState::Screaming) {
+    sendAudio(AudioCmd::Stop, "", 0);
+    finishScare();
+  } else {
+    scareState = ScareState::Off;
+  }
+  mics::setListening(on);
+  applyScareLeds();
+  Serial.printf("Halloween: %s\n", on ? "włączony" : "wyłączony");
+}
+
+void tickScare() {
+  uint32_t now = millis();
+  if (scareState == ScareState::Screaming) {
+    if (playing) return finishScare();  // ktoś włączył radio: krzyk już przerwany
+    if (scareEof && !scareEofMs) scareEofMs = now | 1;
+    if ((scareEofMs && now - scareEofMs > SCARE_TAIL_MS) || now - scareStartMs > SCARE_MAX_MS) {
+      if (!scareEofMs) sendAudio(AudioCmd::Stop, "", 0);
+      finishScare();
+    }
+    return;
+  }
+  if (!scareCfg.on) return;
+  if (playing) scareState = ScareState::Paused;
+  else if (!scare::fileSize() || scare::busy()) scareState = ScareState::NoFile;
+  else if (scareState == ScareState::Cooldown && (int32_t)(scareCoolUntilMs - now) > 0) return;
+  else scareState = ScareState::Armed;
+  if (scareState != ScareState::Armed) {
+    scareAboveSinceMs = 0;
+    return;
+  }
+  float level = max(mics::rmsDb(0), mics::rmsDb(1));
+  if (level < scareCfg.thresholdDb) scareAboveSinceMs = 0;
+  else if (!scareAboveSinceMs) scareAboveSinceMs = now | 1;
+  else if (now - scareAboveSinceMs >= SCARE_HOLD_MS) fireScare();
+}
+
 // ---------- JSON ----------
 
 String jsonEscape(const String& s) {
@@ -941,6 +1065,20 @@ String alarmJson() {
          ",\"beeping\":" + (alarmRun.beeping ? "true" : "false") + "}";
 }
 
+String scareJson() {
+  static const char* STATES[] = {"off", "armed", "scream", "cool", "paused", "nofile"};
+  const char* dl[] = {"idle", "busy", "ok", "error"};
+  char color[8];
+  snprintf(color, sizeof(color), "#%06lx", (unsigned long)scareCfg.color);
+  long cool = scareState == ScareState::Cooldown ? max(0L, (long)(int32_t)(scareCoolUntilMs - millis()) / 1000) : 0;
+  return String(",\"hw\":{\"on\":") + (scareCfg.on ? "true" : "false") + ",\"state\":\"" + STATES[(int)scareState] +
+         "\",\"cool\":" + cool + ",\"count\":" + scareCount + ",\"thr\":" + (int)scareCfg.thresholdDb +
+         ",\"vol\":" + scareCfg.volume + ",\"color\":\"" + color + "\",\"cooldown\":" + scareCfg.cooldownSec +
+         ",\"glow\":" + (scareCfg.glow ? "true" : "false") + ",\"url\":\"" + jsonEscape(scareCfg.url) +
+         "\",\"file\":" + scare::fileSize() + ",\"dl\":\"" + dl[(int)scare::downloadState()] +
+         "\",\"err\":\"" + jsonEscape(scare::lastError()) + "\"}";
+}
+
 String clockJson() {
   if (!timeValid()) return ",\"clock\":\"\"";
   time_t t = time(nullptr);
@@ -968,7 +1106,7 @@ void handleStatus() {
                 ",\"clap\":{\"on\":" + (clapEnabled ? "true" : "false") + ",\"sens\":" + clapSensitivity +
                 ",\"count\":" + mics::clapCount() + ",\"db\":" + String(mics::lastClapDb(), 0) +
                 ",\"need\":" + String(mics::clapNeedDb(), 0) + "}" +
-                ",\"hist\":" + historySeq + "}";
+                ",\"hist\":" + historySeq + scareJson() + "}";
   server.send(200, "application/json", json);
 }
 
@@ -1090,6 +1228,61 @@ void handleClap() {
   prefs.putUChar("clapSens", clapSensitivity);
   mics::setClapDetection(clapEnabled, clapSensitivity);
   sendOk();
+}
+
+void handleScare() {
+  if (server.hasArg("thr")) scareCfg.thresholdDb = constrain(server.arg("thr").toInt(), -80, -5);
+  if (server.hasArg("vol")) scareCfg.volume = constrain(server.arg("vol").toInt(), 1, 21);
+  if (server.hasArg("cooldown")) scareCfg.cooldownSec = constrain(server.arg("cooldown").toInt(), 3, 120);
+  if (server.hasArg("glow")) scareCfg.glow = server.arg("glow") == "1";
+  if (server.hasArg("color")) {
+    String c = server.arg("color");
+    if (c.startsWith("#")) c.remove(0, 1);
+    if (c.length() != 6) return sendError("kolor w formacie #rrggbb");
+    scareCfg.color = strtoul(c.c_str(), nullptr, 16);
+  }
+  if (server.hasArg("on")) setScareEnabled(server.arg("on") == "1");
+  applyScareLeds();
+  saveScare();
+  sendOk();
+}
+
+void handleScareDownload() {
+  String url = server.arg("url");
+  url.trim();
+  if (!(url.startsWith("http://") || url.startsWith("https://")) || url.length() > 390)
+    return sendError("podaj adres http/https pliku MP3");
+  if (scareState == ScareState::Screaming) return sendError("poczekaj, az skonczy krzyczec");
+  scareCfg.url = url;
+  saveScare();
+  // Drugie połączenie TLS obok strumienia https nie mieści się w pamięci wewnętrznej
+  // („SSL - Memory allocation failed”), więc radio milknie na czas pobierania.
+  if (url.startsWith("https://") && playing) stop();
+  if (!scare::startDownload(url)) return sendError("pobieranie juz trwa");
+  sendOk();
+}
+
+void sendScareResult(bool ok) {
+  if (ok) return sendOk();
+  server.send(400, "application/json", "{\"error\":\"" + jsonEscape(scare::lastError()) + "\"}");
+}
+
+// Kawałki pliku z formularza; odpowiedź (sendScareResult) idzie po ostatnim.
+void handleScareUpload() {
+  HTTPUpload& up = server.upload();
+  switch (up.status) {
+    case UPLOAD_FILE_START:
+      uploadResult = false;
+      scare::uploadStart();
+      break;
+    case UPLOAD_FILE_WRITE: scare::uploadWrite(up.buf, up.currentSize); break;
+    case UPLOAD_FILE_END:
+      uploadResult = scare::uploadFinish();
+      Serial.printf("Plik Halloween wgrany: %s\n", uploadResult ? "tak" : scare::lastError().c_str());
+      break;
+    case UPLOAD_FILE_ABORTED: scare::uploadAbort(); break;
+    default: break;
+  }
 }
 
 void handleHistory() {
@@ -1307,6 +1500,15 @@ void setupRoutes() {
     server.on("/api/sleep", HTTP_POST, [] { setSleep(server.arg("min").toInt()); sendOk(); });
     server.on("/api/clap", HTTP_POST, handleClap);
     server.on("/api/history", HTTP_GET, handleHistory);
+    server.on("/api/hw", HTTP_POST, handleScare);
+    server.on("/api/hw/download", HTTP_POST, handleScareDownload);
+    server.on("/api/hw/upload", HTTP_POST, [] { sendScareResult(uploadResult); }, handleScareUpload);
+    server.on("/api/hw/test", HTTP_POST, [] {
+      if (playing) return sendError("zatrzymaj radio");
+      if (scareState == ScareState::Screaming) return sendOk();
+      if (!fireScare()) return sendError("brak pliku z dzwiekiem");
+      sendOk();
+    });
     server.on("/api/announce", HTTP_POST, [] {
       announceEnabled = server.arg("on") == "1";
       prefs.putBool("announce", announceEnabled);
@@ -1673,6 +1875,8 @@ void setup() {
   loadAlarm();
   clapEnabled = prefs.getBool("clap", false);
   clapSensitivity = constrain(prefs.getUChar("clapSens", 2), 1, 3);
+  loadScare();
+  if (scareCfg.on) resume = false;  // w masce radio nie gra, tylko czeka na gości
 
   leds::begin(board::LED_PIN, board::LED_COUNT);  // od razu animacja startowa
   leds::setColor(prefs.getUInt("ledColor", 0xFF6A00));
@@ -1692,6 +1896,13 @@ void setup() {
   if (!mics::begin()) Serial.println("Błąd inicjalizacji mikrofonów (ES7210 / I2S1)");
   prepareNumberClips();
   prepareBeep();
+  scare::begin();
+  if (scareCfg.on) {
+    scareState = ScareState::Cooldown;
+    scareCoolUntilMs = millis() + 3000;
+    mics::setListening(true);
+  }
+  applyScareLeds();
 
   audioQueue = xQueueCreate(8, sizeof(AudioMsg));
   // Rdzeń 1 i ten sam priorytet co loop(): FreeRTOS dzieli między nie czas, więc liczenie SSL
@@ -1730,6 +1941,7 @@ void loop() {
   keepStreamAlive();
   tickAlarm();
   tickSleep();
+  tickScare();
   updateLeds();
   vTaskDelay(1);
 }

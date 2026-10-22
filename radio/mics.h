@@ -16,6 +16,9 @@ bool begin();
 void keepAwake();
 bool awake();
 
+// Mikrofony mierzą cały czas (tryb Halloween czeka na głosy), a nie tylko przy oglądaniu poziomów.
+void setListening(bool on);
+
 // Wykrywanie podwójnego klaśnięcia; gdy włączone, mikrofony słuchają cały czas.
 // sensitivity: 1 = niska, 2 = średnia, 3 = wysoka.
 void setClapDetection(bool on, uint8_t sensitivity);

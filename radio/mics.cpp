@@ -68,6 +68,7 @@ constexpr float CLAP_RISE_DB[] = {24, 18, 13};
 constexpr float CLAP_MIN_DB[] = {-18, -26, -34};
 
 volatile bool clapOn = false;
+volatile bool listening = false;
 volatile uint8_t clapSens = 2;
 volatile bool doubleClap = false;
 volatile uint32_t claps = 0;
@@ -157,7 +158,7 @@ void task(void*) {
   float blockPeak = 0;
   int blockFrames = 0;
   for (;;) {
-    bool want = awake() || clapOn;
+    bool want = awake() || clapOn || listening;
     if (want != running) {
       running = want;
       running ? i2s_channel_enable(rx) : i2s_channel_disable(rx);
@@ -259,6 +260,8 @@ void feedOutput(const int32_t* buff, int samples) {
     outSlotPeak[slot] = pk;
   }
 }
+
+void setListening(bool on) { listening = on; }
 
 void suppress(uint32_t ms) { suppressUntilMs = millis() + ms; }
 

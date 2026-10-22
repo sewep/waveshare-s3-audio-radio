@@ -67,6 +67,12 @@ void setVuLevel(uint8_t level);       // 0..255, z biblioteki audio
 void setSpectrum(const std::vector<uint32_t>& bands);  // 15 pasm 0..255, z biblioteki audio
 void setBatteryPercent(int percent);  // -1 = nieznany
 
+// Halloween: pierścień to oczy maski w kolorze rgb, jasne według setScareLevel() (dźwięk z głośnika,
+// 0..255); glow = przygaszone oczy w ciszy. Ma pierwszeństwo przed wszystkim poza animacją
+// startową i wskaźnikiem.
+void setScare(bool on, uint32_t rgb, bool glow);
+void setScareLevel(uint8_t level);
+
 // Świt przed budzikiem: 0..1 rozjaśnia pierścień od czerwieni do ciepłej bieli; -1 = wyłączony.
 // Ma pierwszeństwo przed trybem i stanem (poza animacją startową i wskaźnikiem).
 void setSunrise(float progress);

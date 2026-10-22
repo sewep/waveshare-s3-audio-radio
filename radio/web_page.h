@@ -5,8 +5,9 @@
 static const char FAVICON_SVG[] PROGMEM = R"SVG(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#2563eb"/><path d="M22 23 44 11" stroke="#fff" stroke-width="4" stroke-linecap="round"/><rect x="10" y="23" width="44" height="31" rx="7" fill="#fff"/><circle cx="24" cy="38.5" r="8" fill="#2563eb"/><circle cx="24" cy="38.5" r="3" fill="#fff"/><rect x="37" y="31" width="11" height="4" rx="2" fill="#2563eb"/><rect x="37" y="37" width="11" height="4" rx="2" fill="#2563eb"/><rect x="37" y="43" width="11" height="4" rx="2" fill="#2563eb"/></svg>)SVG";
 
 // Strona radia, ta sama w trybie normalnym i w trybie konfiguracji (hotspot). Zakładki: Radio,
-// Stacje, Budzik, Światło, Wi-Fi, Stan, Pomoc; aktywna zakładka jest w adresie (#radio, #stacje,
-// #budzik, #swiatlo, #wifi, #stan, #pomoc). Zakładka Stan pyta o poziomy dźwięku co 150 ms i o resztę co 2 s, tylko
+// Stacje, Budzik, Światło, Wi-Fi, Stan, Pomoc i Halloween (dynia); aktywna zakładka jest w adresie
+// (#radio, #stacje, #budzik, #swiatlo, #wifi, #stan, #pomoc, #halloween). Zakładki Stan i Halloween
+// pytają o poziomy mikrofonów co 150 ms, tylko gdy są otwarte. Zakładka Stan pyta o poziomy dźwięku co 150 ms i o resztę co 2 s, tylko
 // gdy jest otwarta. Sekcje mają data-tab, a nie id, żeby przeglądarka nie przewijała do nich pod
 // przyklejony pasek zakładek. W trybie konfiguracji (/api/wifi zwraca "ap":true) widać tylko Wi-Fi.
 //
@@ -96,6 +97,7 @@ li .star.on{color:#f59e0b}
 .field{display:grid;grid-template-columns:9em 1fr;gap:8px;align-items:center;margin:8px 0;font-size:15px}
 .field select,input[type=time]{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);min-width:0}
 input[type=time]{font-size:22px;font-weight:600}
+.bar u{position:absolute;top:0;bottom:0;width:3px;margin-left:-1px;background:var(--danger)}
 #apInfo{display:none}
 body.ap #apInfo{display:block}
 body.ap nav,body.ap .sta{display:none}
@@ -225,7 +227,7 @@ body.ap nav,body.ap .sta{display:none}
 </svg>
 </header>
 <nav>
-  <a href="#radio">Radio</a><a href="#stacje">Stacje</a><a href="#budzik">Budzik</a><a href="#swiatlo">Światło</a><a href="#wifi">Wi-Fi</a><a href="#stan">Stan</a><a href="#pomoc">Pomoc</a>
+  <a href="#radio">Radio</a><a href="#stacje">Stacje</a><a href="#budzik">Budzik</a><a href="#swiatlo">Światło</a><a href="#wifi">Wi-Fi</a><a href="#stan">Stan</a><a href="#pomoc">Pomoc</a><a href="#halloween" title="Halloween">🎃</a>
 </nav>
 <main>
 
@@ -441,6 +443,37 @@ body.ap nav,body.ap .sta{display:none}
   </div>
 </section>
 
+<section data-tab="halloween">
+  <div class="card">
+    <h2>Straszak na Halloween</h2>
+    <label class="row"><input type="checkbox" id="hwOn"> Włączony</label>
+    <p class="now" id="hwState" style="font-size:18px"></p>
+    <p class="muted">Radio przestaje grać i nasłuchuje. Gdy ktoś zacznie mówić przy masce, puszcza dźwięk z pliku, a diody świecą jak oczy w rytm krzyku. Po krzyku chwilę odpoczywa, żeby nie przestraszyło samo siebie. Włączony straszak zostaje włączony po odłączeniu zasilania.</p>
+    <div class="row"><button class="primary" id="hwTest">Wypróbuj krzyk</button><span class="muted" id="hwCount"></span></div>
+  </div>
+  <div class="card">
+    <h2>Czułość</h2>
+    <div class="meter"><span>Mikrofon</span><div class="bar" id="lvHw"><i></i><b></b><u></u></div><span class="db" id="lvHwV">—</span></div>
+    <div class="scale"><span></span><div><span>−80</span><span>−60</span><span>−40</span><span>−20</span><span>0 dBFS</span></div><span></span></div>
+    <div class="tone"><span>Próg</span><input type="range" id="hwThr" min="-80" max="-10"><span id="hwThrv"></span></div>
+    <p class="muted">Pasek to mikrofon na żywo, czerwona kreska to próg. Stań tam, gdzie będą goście, powiedz coś zwykłym głosem i ustaw próg trochę poniżej tego, co pokazuje pasek. Głos musi trwać 0,2 s, więc pojedynczy stuk nie wystarczy.</p>
+  </div>
+  <div class="card">
+    <h2>Dźwięk</h2>
+    <p id="hwFile"></p>
+    <form id="hwDl"><input type="url" id="hwUrl" placeholder="Adres pliku MP3, np. https://…/krzyk.mp3" required><button class="primary">Pobierz do radia</button></form>
+    <div class="row" style="margin-top:8px"><input type="file" id="hwUp" accept=".mp3,audio/mpeg" style="flex:1;min-width:0"><button id="hwUpBtn">Wgraj</button></div>
+    <p class="muted">Tylko MP3, do 3 MB. Plik zostaje w radiu, więc krzyk zaczyna się od razu i działa bez internetu. Pobieranie z adresu https zatrzymuje radio (na dwa połączenia https naraz brakuje pamięci).</p>
+    <div class="tone"><span>Głośność</span><input type="range" id="hwVol" min="1" max="21"><span id="hwVolv"></span></div>
+    <div class="field"><span>Odpoczynek po krzyku</span><select id="hwCool"></select></div>
+  </div>
+  <div class="card">
+    <h2>Oczy</h2>
+    <div class="row"><span class="muted">Kolor</span><input type="color" id="hwColor"><label class="row"><input type="checkbox" id="hwGlow"> Żarzą się w ciszy</label></div>
+    <p class="muted">Diody świecą tym jaśniej, im głośniej gra głośnik, i lekko migoczą. Jasność z zakładki Światło ich nie dotyczy.</p>
+  </div>
+</section>
+
 <section data-tab="pomoc">
   <div class="card">
     <h2>Przyciski na płytce</h2>
@@ -465,6 +498,7 @@ body.ap nav,body.ap .sta{display:none}
       <li>Gwiazdką w zakładce Stacje oznaczysz ulubione. Mają przyciski w zakładce Radio, a na płytce przełącza je podwójne kliknięcie Key2.</li>
       <li>Wyłącznik czasowy ustawisz w zakładce Radio albo przyciskami Key1 + Key3. W ostatniej minucie muzyka powoli cichnie.</li>
       <li>Gdy strumień się urwie, radio po kilku sekundach samo połączy się ponownie.</li>
+      <li>Zakładka z dynią to straszak na Halloween: po usłyszeniu głosu radio krzyczy z wgranego pliku, a diody świecą jak oczy.</li>
       <li>Zmiany zrobione przyciskami pojawiają się na stronie po kilku sekundach.</li>
     </ul>
   </div>
@@ -537,6 +571,7 @@ const LOOKS={
 
 function ringLook(){
   if(apMode)return[fill7('#0040ff'),'breathe'];
+  if(st.hw&&(st.hw.on||st.hw.state==='scream'))return[fill7(st.hw.state==='scream'?st.hw.color:st.hw.glow?st.hw.color+'40':DIM),st.hw.state==='scream'?'pulse':''];
   const L=st.led;if(!L||L.mode==='off')return[fill7(DIM),''];
   if(st.trouble)return[fill7('#ff5000'),'spin'];
   if(st.playing&&st.loading)return[fill7('#0040ff'),'spin'];
@@ -636,6 +671,7 @@ function render(){
   }
   if(st.hist!==undefined&&st.hist!==histSeq){histSeq=st.hist;loadHistory()}
   renderAlarm(false);
+  renderHw();
 
   if(st.led){
     const md=MODES.find(x=>x[0]===st.led.mode);
@@ -713,6 +749,47 @@ $('alSave').onclick=async()=>{
   await status();renderAlarm(true);$('alSaved').textContent='zapisano';
 };
 $('alTest').onclick=()=>{if(st.playing&&!confirm('Radio już gra, więc budzik pokaże tylko świt. Wypróbować?'))return;post('/api/alarm/test').then(status)};
+
+// ---------- Halloween ----------
+
+const hwOpen=()=>!document.hidden&&document.querySelector('section[data-tab="halloween"]').classList.contains('on');
+const HW_STATES={off:'Wyłączony.',armed:'Czeka na gości…',scream:'Krzyczy!',paused:'Wstrzymany, bo gra radio. Zatrzymaj je, żeby straszył.'};
+let hwUrlFilled=false;
+function renderHw(){
+  const H=st.hw;if(!H)return;
+  $('hwOn').checked=H.on;
+  $('hwState').textContent=H.state==='cool'?`Odpoczywa jeszcze ${H.cool} s.`:H.state==='nofile'?(H.dl==='busy'?'Pobiera plik…':'Brak pliku z dźwiękiem: dodaj go niżej.'):HW_STATES[H.state]||'';
+  $('hwCount').textContent=H.count?`Krzyki od włączenia radia: ${H.count}`:'';
+  $('hwFile').textContent=H.dl==='busy'?'Pobieranie…':H.dl==='error'&&H.err?`Nie udało się: ${H.err}.`:H.file?`Plik w radiu: ${kb(H.file)}.`:'W radiu nie ma jeszcze pliku.';
+  if(!hwUrlFilled&&H.url&&document.activeElement!==$('hwUrl')){$('hwUrl').value=H.url;hwUrlFilled=true}
+  if(document.activeElement!==$('hwThr')){$('hwThr').value=H.thr;$('hwThrv').textContent=H.thr+' dB'}
+  if(document.activeElement!==$('hwVol')){$('hwVol').value=H.vol;$('hwVolv').textContent=H.vol}
+  if(document.activeElement!==$('hwColor'))$('hwColor').value=H.color;
+  if(document.activeElement!==$('hwCool'))$('hwCool').value=H.cooldown;
+  $('hwGlow').checked=H.glow;
+  hwMark(+$('hwThr').value);
+}
+const hwMark=thr=>$('lvHw').querySelector('u').style.left=Math.max(0,Math.min(100,(thr+80)/80*100))+'%';
+[3,5,10,20,30,60].forEach(v=>$('hwCool').add(new Option(`${v} s`,v)));
+$('hwOn').onchange=e=>post('/api/hw',{on:e.target.checked?1:0}).then(status);
+$('hwThr').oninput=e=>{$('hwThrv').textContent=e.target.value+' dB';hwMark(+e.target.value)};
+$('hwThr').onchange=e=>post('/api/hw',{thr:e.target.value}).then(status);
+$('hwVol').oninput=e=>$('hwVolv').textContent=e.target.value;
+$('hwVol').onchange=e=>post('/api/hw',{vol:e.target.value}).then(status);
+$('hwCool').onchange=e=>post('/api/hw',{cooldown:e.target.value}).then(status);
+$('hwColor').onchange=e=>post('/api/hw',{color:e.target.value}).then(status);
+$('hwGlow').onchange=e=>post('/api/hw',{glow:e.target.checked?1:0}).then(status);
+$('hwTest').onclick=async()=>{const r=await (await post('/api/hw/test')).json();if(r.error)alert('Nie da się: '+r.error);status()};
+$('hwDl').onsubmit=async e=>{e.preventDefault();
+  const r=await (await post('/api/hw/download',{url:$('hwUrl').value.trim()})).json();
+  if(r.error)alert('Nie pobrano: '+r.error);status()};
+$('hwUpBtn').onclick=async()=>{
+  const f=$('hwUp').files[0];if(!f){alert('Wybierz plik MP3.');return}
+  if(f.size>3*1048576){alert('Plik jest większy niż 3 MB.');return}
+  const fd=new FormData();fd.append('file',f,f.name);
+  $('hwFile').textContent='Wgrywanie…';$('hwUpBtn').disabled=true;
+  try{const r=await (await fetch('/api/hw/upload',{method:'POST',body:fd})).json();if(r.error)alert('Nie wgrano: '+r.error)}catch(e){alert('Nie wgrano pliku.')}
+  $('hwUpBtn').disabled=false;$('hwUp').value='';status()};
 
 // ---------- Wi-Fi ----------
 
@@ -852,17 +929,19 @@ $('apCancel').onclick=()=>post('/api/wifi/cancel').then(()=>wifiDone('Radio wrac
 
 const stanOpen=()=>!document.hidden&&document.querySelector('section[data-tab="stan"]').classList.contains('on');
 const peaks={};
-function meter(id,[rms,pk]){
-  const pct=db=>Math.max(0,Math.min(100,(db+60)/60*100));
+function meter(id,[rms,pk],lo=-60){
+  const pct=db=>Math.max(0,Math.min(100,(db-lo)/-lo*100));
   peaks[id]=Math.max(pk,(peaks[id]??-120)-1.5);  // szczyt opada 1,5 dB na odczyt
   $(id).querySelector('i').style.clipPath=`inset(0 ${100-pct(rms)}% 0 0)`;
   $(id).querySelector('b').style.left=`calc(${pct(peaks[id])}% - 2px)`;
   $(id+'V').textContent=rms<=-119?'cisza':`${rms.toFixed(0)} / ${pk.toFixed(0)}`;
 }
 async function levels(){
-  if(stanOpen()){try{const l=await (await fetch('/api/levels',{cache:'no-store'})).json();
-    meter('lvOut',l.out);meter('lvMic0',l.mic[0]);meter('lvMic1',l.mic[1])}catch(e){}}
-  setTimeout(levels,stanOpen()?150:1000);
+  const s=stanOpen(),h=hwOpen();
+  if(s||h){try{const l=await (await fetch('/api/levels',{cache:'no-store'})).json();
+    if(s){meter('lvOut',l.out);meter('lvMic0',l.mic[0]);meter('lvMic1',l.mic[1])}
+    if(h)meter('lvHw',l.mic[0][0]>=l.mic[1][0]?l.mic[0]:l.mic[1],-80)}catch(e){}}
+  setTimeout(levels,s||h?150:1000);
 }
 
 const kb=n=>n>=1048576?(n/1048576).toFixed(1).replace('.',',')+' MB':Math.round(n/1024)+' KB';

@@ -32,6 +32,13 @@ volatile bool darkPlaying = false;
 bool lowBattery = false;
 volatile float sunrise = -1;  // świt budzika 0..1, -1 = wyłączony
 
+// Halloween: diody to oczy maski, jasne w rytm dźwięku z głośnika.
+volatile bool scareOn = false;
+volatile uint32_t scareColor = 0xFF0000;
+volatile bool scareGlow = false;  // przygaszone oczy, gdy nic nie gra
+volatile uint8_t scareInput = 0;
+float scareLevel = 0;
+
 // Wskaźnik: przez chwilę świeci tyle diod, ile podano (np. czas wyłącznika), ponad wszystkim.
 volatile uint8_t indicatorCount = 0;
 volatile uint32_t indicatorColor = 0;
@@ -400,6 +407,17 @@ void renderSunrise(float p) {
   fill(Adafruit_NeoPixel::Color(c[0], c[1], c[2]));
 }
 
+// Oczy: szybko rozbłyskują, wolniej gasną; lekkie drganie, żeby nie wyglądały jak żarówka.
+// Jasność nie zależy od ustawienia diod (w masce ma być widać).
+void renderEyes(uint32_t t) {
+  float in = scareInput / 255.0f;
+  scareLevel = in > scareLevel ? in : scareLevel * 0.8f;
+  float k = scareLevel > 0.02f ? scareLevel * (0.85f + 0.15f * random(100) / 100.0f) : 0;
+  if (scareGlow) k = max(k, 0.04f + 0.02f * wave(t, 3000));
+  uint32_t c = scareColor;
+  fill(Adafruit_NeoPixel::Color(((c >> 16) & 0xFF) * k, ((c >> 8) & 0xFF) * k, (c & 0xFF) * k));
+}
+
 void render(uint32_t t) {
   updateMusic(t);
   updateSpectrum();
@@ -411,6 +429,7 @@ void render(uint32_t t) {
     for (int i = 0; i < ledCount; i++) strip->setPixelColor(i, i < indicatorCount ? on : 0);
     return;
   }
+  if (scareOn) return renderEyes(t);
   float sun = sunrise;
   if (sun >= 0) return renderSunrise(sun);
   if (curMode == Mode::Off) return fill(0);
@@ -485,6 +504,12 @@ void setSpectrum(const std::vector<uint32_t>& bands) {
   for (int b = 0; b < SPECTRUM_BANDS && b < (int)bands.size(); b++) spectrum[b] = min<uint32_t>(bands[b], 255);
 }
 void setBatteryPercent(int percent) { batteryPercent = percent; }
+void setScare(bool on, uint32_t rgb, bool glow) {
+  scareColor = rgb & 0xFFFFFF;
+  scareGlow = glow;
+  scareOn = on;
+}
+void setScareLevel(uint8_t level) { scareInput = level; }
 void setSunrise(float progress) { sunrise = progress < 0 ? -1 : min(progress, 1.0f); }
 
 void showIndicator(uint8_t count, uint32_t rgb, uint32_t ms) {
