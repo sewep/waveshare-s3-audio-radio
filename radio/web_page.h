@@ -4,37 +4,44 @@
 // i /favicon.ico (przeglądarki pytają o ten adres same z siebie).
 static const char FAVICON_SVG[] PROGMEM = R"SVG(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#2563eb"/><path d="M22 23 44 11" stroke="#fff" stroke-width="4" stroke-linecap="round"/><rect x="10" y="23" width="44" height="31" rx="7" fill="#fff"/><circle cx="24" cy="38.5" r="8" fill="#2563eb"/><circle cx="24" cy="38.5" r="3" fill="#fff"/><rect x="37" y="31" width="11" height="4" rx="2" fill="#2563eb"/><rect x="37" y="37" width="11" height="4" rx="2" fill="#2563eb"/><rect x="37" y="43" width="11" height="4" rx="2" fill="#2563eb"/></svg>)SVG";
 
-// Strona sterowania radiem (tryb normalny). Zakładki: Radio, Stacje, Podświetlenie, Pomoc;
-// aktywna zakładka jest w adresie (#radio, #stacje, #swiatlo, #pomoc). Sekcje mają data-tab,
-// a nie id, żeby przeglądarka nie przewijała do nich pod przyklejony pasek zakładek.
+// Strona radia, ta sama w trybie normalnym i w trybie konfiguracji (hotspot). Zakładki: Radio,
+// Stacje, Światło, Wi-Fi, Pomoc; aktywna zakładka jest w adresie (#radio, #stacje, #swiatlo,
+// #wifi, #pomoc). Sekcje mają data-tab, a nie id, żeby przeglądarka nie przewijała do nich pod
+// przyklejony pasek zakładek. W trybie konfiguracji (/api/wifi zwraca "ap":true) widać tylko Wi-Fi.
+//
+// Nagłówek to rysunek radia na tle nocnego nieba: wyświetlacz pokazuje numer i nazwę stacji,
+// wskazówka skali i gałki idą za stacją i głośnością, a pierścień 7 diod wokół głośnika
+// w przybliżeniu naśladuje wybrany efekt diod na płytce.
 static const char INDEX_HTML[] PROGMEM = R"HTML(<!doctype html>
 <html lang="pl"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Radio</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<meta name="theme-color" content="#2563eb">
+<meta name="theme-color" content="#0b1026">
 <style>
-:root{--bg:#f4f5f7;--card:#fff;--fg:#1d2330;--muted:#6b7280;--accent:#2563eb;--line:#e5e7eb;--danger:#dc2626}
-@media (prefers-color-scheme:dark){:root{--bg:#111318;--card:#1b1e25;--fg:#e8eaf0;--muted:#9aa1ad;--accent:#60a5fa;--line:#2b2f38;--danger:#f87171}}
+:root{--bg:#f4f5f7;--card:#fff;--fg:#1d2330;--muted:#6b7280;--accent:#2563eb;--line:#e5e7eb;--danger:#dc2626;--warn:#b45309}
+@media (prefers-color-scheme:dark){:root{--bg:#111318;--card:#1b1e25;--fg:#e8eaf0;--muted:#9aa1ad;--accent:#60a5fa;--line:#2b2f38;--danger:#f87171;--warn:#fbbf24}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.45 system-ui,sans-serif}
 main{max-width:560px;margin:0 auto;padding:16px 16px 32px}
 nav{position:sticky;top:0;z-index:1;background:var(--bg);display:flex;gap:4px;max-width:560px;margin:0 auto;padding:8px 16px;border-bottom:1px solid var(--line)}
-nav a{flex:1;text-align:center;padding:8px 4px;border-radius:8px;color:var(--muted);text-decoration:none;font-size:14px;font-weight:600}
+nav a{flex:1;text-align:center;padding:8px 2px;border-radius:8px;color:var(--muted);text-decoration:none;font-size:14px;font-weight:600}
 nav a.on{background:var(--card);color:var(--accent);box-shadow:0 0 0 1px var(--line)}
 section{display:none}section.on{display:block}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
 h2{font-size:17px;margin:0 0 8px}
 p{margin:6px 0}
 .muted{color:var(--muted);font-size:14px}
+.warn{color:var(--warn);font-size:14px}
 .now{font-size:20px;font-weight:600;margin:4px 0 2px}
 .title{min-height:1.4em}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 button{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:8px;padding:8px 12px;cursor:pointer}
+button:disabled{opacity:.5;cursor:default}
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 button.del{color:var(--danger);border-color:transparent;background:none;padding:8px}
 input[type=range]{flex:1;min-width:120px}
-input[type=text],input[type=url]{font:inherit;width:100%;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg)}
+input[type=text],input[type=url],input[type=password]{font:inherit;width:100%;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg)}
 input[type=color]{width:44px;height:36px;padding:0;border:1px solid var(--line);border-radius:8px;background:none}
 ul{list-style:none;margin:0;padding:0}
 li{display:flex;align-items:center;gap:8px;border-top:1px solid var(--line);padding:4px 0}
@@ -43,6 +50,12 @@ li .name{flex:1;padding:8px 0;cursor:pointer;overflow:hidden;text-overflow:ellip
 li.on .name{color:var(--accent);font-weight:600}
 li .url{flex:1;min-width:0}
 li .url small{display:block;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#nets li{cursor:pointer}
+.badge{font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:1px 8px;white-space:nowrap}
+.badge.on{color:var(--accent);border-color:var(--accent)}
+.bars{fill:var(--accent);flex:none;vertical-align:-2px}
+.lock{fill:none;stroke:var(--muted);stroke-width:1.6;vertical-align:-1px}
+.pw{display:flex;gap:8px}
 form{display:grid;gap:8px}
 .chips{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
 .chips button.on{background:var(--accent);border-color:var(--accent);color:#fff}
@@ -53,9 +66,136 @@ td:first-child{font-weight:600;white-space:nowrap}
 ol,ul.dots{margin:6px 0;padding-left:20px}
 ul.dots{list-style:disc}ol li,ul.dots li{display:list-item;border:none;padding:2px 0}
 code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:0 4px;font-size:14px}
+#apInfo{display:none}
+body.ap #apInfo{display:block}
+body.ap nav,body.ap .sta{display:none}
+
+/* nagłówek: radio pod nocnym niebem */
+.hero{background:linear-gradient(180deg,#070b1f 0%,#131c46 62%,#24306b 100%)}
+.hero svg{display:block;width:100%;max-width:560px;height:auto;margin:0 auto}
+.hero .led{transition:fill .5s;animation-delay:calc(var(--i) * var(--d,.143s) * -1)}
+.hero .tw{animation:tw 4s ease-in-out infinite}
+@keyframes tw{0%,100%{opacity:.25}50%{opacity:1}}
+.hero .wv{opacity:.18}
+.hero.air .wv{animation:wv 2.4s ease-out infinite}
+.hero.air .wv:nth-of-type(2){animation-delay:.4s}.hero.air .wv:nth-of-type(3){animation-delay:.8s}
+@keyframes wv{0%{opacity:0}25%{opacity:.95}100%{opacity:0}}
+.hero .note{opacity:0}
+.hero.playing .note{animation:note 3.2s ease-out infinite}
+.hero.playing .note+.note{animation-delay:1.6s}
+@keyframes note{0%{opacity:0;transform:translate(0,6px)}20%{opacity:1}100%{opacity:0;transform:translate(10px,-34px) rotate(12deg)}}
+.hero .cone{transform-box:fill-box;transform-origin:center}
+.hero.playing .cone{animation:thump .42s ease-in-out infinite alternate}
+@keyframes thump{to{transform:scale(1.3)}}
+#ringHue.hue{animation:hue 6s linear infinite}
+@keyframes hue{to{filter:hue-rotate(360deg)}}
+#ring.spin .led{animation:spin 1s linear infinite}
+#ring.wave .led{--d:.343s;animation:spin 2.4s ease-in-out infinite}
+#ring.bounce .led{animation:spin 1.2s linear infinite alternate}
+@keyframes spin{0%{opacity:1}65%,100%{opacity:.08}}
+#ring.breathe .led{animation:breathe 3s ease-in-out infinite}
+@keyframes breathe{0%,100%{opacity:.12}50%{opacity:1}}
+#ring.beat .led{--d:.21s;animation:breathe calc(.45s + var(--r) * .5s) ease-in-out infinite}
+#ring.pulse .led{animation:pulse .5s ease-out infinite}
+@keyframes pulse{0%{opacity:1}100%{opacity:.1}}
+#ring.twinkle .led{animation:twinkle 1.8s ease-out infinite;animation-delay:calc(var(--r) * -1.8s)}
+@keyframes twinkle{0%{opacity:1}35%,100%{opacity:.12}}
+#ring.flicker .led{animation:flicker calc(.3s + var(--r) * .4s) steps(4) infinite alternate}
+@keyframes flicker{0%{opacity:.45}100%{opacity:1}}
+#ring.police .led{animation:police .7s steps(1) infinite}
+#ring.police .led:nth-child(-n+3){animation-delay:-.35s}
+@keyframes police{0%{opacity:1}50%{opacity:.06}}
+#ring.aurora .led{--d:.5s;animation:breathe 3.5s ease-in-out infinite}
+.hero:not(.playing) #ring:is(.beat,.pulse) .led{animation:none;opacity:.3}
+#hName.marq{animation:marq 8s ease-in-out infinite alternate}
+@keyframes marq{0%,20%{transform:translateX(0)}80%,100%{transform:translateX(var(--dx))}}
+@media (prefers-reduced-motion:reduce){.hero *{animation:none!important}}
 </style></head><body>
+<header class="hero" id="hero">
+<svg id="heroSvg" viewBox="0 0 560 172" role="img" aria-label="Rysunek radia Smart spiker">
+  <defs>
+    <linearGradient id="wood" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c2531a"/><stop offset=".55" stop-color="#93360f"/><stop offset="1" stop-color="#5f2109"/></linearGradient>
+    <linearGradient id="brass" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fde68a"/><stop offset="1" stop-color="#a16207"/></linearGradient>
+    <radialGradient id="grille"><stop offset="0" stop-color="#2b2420"/><stop offset="1" stop-color="#0c0a09"/></radialGradient>
+    <filter id="glow" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="2.6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <filter id="soft" x="-20%" y="-50%" width="140%" height="200%"><feGaussianBlur stdDeviation="1.1" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <mask id="moonCut"><rect width="560" height="172" fill="#fff"/><circle cx="80" cy="33" r="15" fill="#000"/></mask>
+    <clipPath id="dispClip"><rect x="288" y="79" width="104" height="31"/></clipPath>
+  </defs>
+  <g fill="#fff">
+    <circle cx="28" cy="22" r="1.1" class="tw"/><circle cx="118" cy="16" r="1.3" class="tw" style="animation-delay:-1.3s"/>
+    <circle cx="40" cy="78" r=".9"/><circle cx="104" cy="66" r="1.2" class="tw" style="animation-delay:-2.1s"/>
+    <circle cx="16" cy="128" r="1"/><circle cx="62" cy="112" r="1.4" class="tw" style="animation-delay:-.6s"/>
+    <circle cx="186" cy="18" r="1"/><circle cx="246" cy="30" r="1.2" class="tw" style="animation-delay:-3s"/>
+    <circle cx="318" cy="14" r="1.1" class="tw" style="animation-delay:-1.8s"/><circle cx="372" cy="34" r=".9"/>
+    <circle cx="502" cy="20" r="1.3" class="tw" style="animation-delay:-2.6s"/><circle cx="540" cy="58" r="1"/>
+    <circle cx="512" cy="102" r="1.2" class="tw" style="animation-delay:-.9s"/><circle cx="546" cy="140" r=".9"/>
+    <circle cx="478" cy="132" r="1.1"/>
+  </g>
+  <circle cx="70" cy="40" r="16" fill="#fef3c7" mask="url(#moonCut)" filter="url(#soft)"/>
+  <ellipse cx="280" cy="165" rx="150" ry="5" fill="#000" opacity=".35"/>
+
+  <!-- fale radiowe z anteny -->
+  <g fill="none" stroke="#93c5fd" stroke-width="2.5" stroke-linecap="round">
+    <path class="wv" d="M453.7 12.8A12 12 0 0 1 455.2 29.7"/>
+    <path class="wv" d="M460.1 5.2A22 22 0 0 1 462.9 36.1"/>
+    <path class="wv" d="M466.6 -2.5A32 32 0 0 1 470.5 42.6"/>
+  </g>
+  <rect x="385" y="49" width="14" height="7" rx="2" fill="#44403c"/>
+  <path d="M392 52 446 22" stroke="#a8a29e" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="446" cy="22" r="4" fill="#fb7185" filter="url(#glow)"/>
+
+  <!-- obudowa -->
+  <rect x="170" y="156" width="26" height="10" rx="3" fill="#3b1606"/>
+  <rect x="364" y="156" width="26" height="10" rx="3" fill="#3b1606"/>
+  <rect x="140" y="54" width="280" height="106" rx="20" fill="url(#wood)"/>
+  <g fill="none" stroke="#fff" stroke-opacity=".07" stroke-width="1.2">
+    <path d="M150 60q70-5 130 0t130 0"/><path d="M146 154q80 4 140 0t126 0"/><path d="M144 104q4 20 2 44"/><path d="M416 70q3 30 0 60"/>
+  </g>
+  <rect x="140.5" y="54.5" width="279" height="105" rx="19.5" fill="none" stroke="#fff" stroke-opacity=".14"/>
+  <rect x="152" y="66" width="256" height="84" rx="12" fill="#17110d"/>
+
+  <!-- głośnik z pierścieniem diod -->
+  <circle cx="200" cy="108" r="35" fill="none" stroke="#241b16" stroke-width="11"/>
+  <circle cx="200" cy="108" r="28" fill="url(#grille)"/>
+  <g fill="none" stroke="#3f3631" stroke-width="1.2"><circle cx="200" cy="108" r="22"/><circle cx="200" cy="108" r="16"/><circle cx="200" cy="108" r="10.5"/></g>
+  <circle class="cone" cx="200" cy="108" r="6" fill="#4a403a"/>
+  <g id="ringHue"><g filter="url(#glow)"><g id="ring">
+    <circle class="led" style="--i:0;--r:0" cx="200" cy="73" r="4.2"/>
+    <circle class="led" style="--i:1;--r:.57" cx="227.4" cy="86.2" r="4.2"/>
+    <circle class="led" style="--i:2;--r:.29" cx="234.1" cy="115.8" r="4.2"/>
+    <circle class="led" style="--i:3;--r:.86" cx="215.2" cy="139.5" r="4.2"/>
+    <circle class="led" style="--i:4;--r:.14" cx="184.8" cy="139.5" r="4.2"/>
+    <circle class="led" style="--i:5;--r:.71" cx="165.9" cy="115.8" r="4.2"/>
+    <circle class="led" style="--i:6;--r:.43" cx="172.6" cy="86.2" r="4.2"/>
+  </g></g></g>
+
+  <!-- wyświetlacz ze skalą -->
+  <rect x="250" y="74" width="146" height="46" rx="6" fill="#03171b" stroke="#0f3d44"/>
+  <g fill="#5eead4" font-family="ui-monospace,Menlo,Consolas,monospace" filter="url(#soft)">
+    <text id="hNum" x="270" y="103" text-anchor="middle" font-size="22" font-weight="700">--</text>
+    <g clip-path="url(#dispClip)"><text id="hName" x="290" y="93" font-size="11">RADIO</text></g>
+    <text id="hState" x="290" y="106" font-size="8" fill-opacity=".75"></text>
+  </g>
+  <path d="M256 117v-4M264 117v-2M272 117v-2M280 117v-2M288 117v-4M296 117v-2M304 117v-2M312 117v-2M320 117v-4M328 117v-2M336 117v-2M344 117v-2M352 117v-4M360 117v-2M368 117v-2M376 117v-2M384 117v-4M390 117v-2" stroke="#2dd4bf" stroke-opacity=".45"/>
+  <rect id="needle" x="255" y="110" width="2" height="9" rx="1" fill="#fb7185" filter="url(#soft)"/>
+
+  <!-- gałki i tabliczka -->
+  <circle cx="266" cy="135" r="9.5" fill="url(#brass)" stroke="#713f12"/>
+  <path id="knobSt" d="M266 135v-7" stroke="#451a03" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="380" cy="135" r="9.5" fill="url(#brass)" stroke="#713f12"/>
+  <path id="knobVol" d="M380 135v-7" stroke="#451a03" stroke-width="2" stroke-linecap="round"/>
+  <text x="323" y="138" text-anchor="middle" font-family="system-ui,sans-serif" font-size="8" font-weight="700" letter-spacing="1.6" fill="#e7b35a">SMART SPIKER</text>
+
+  <!-- nutki, gdy gra -->
+  <g fill="#fcd34d">
+    <g class="note"><g transform="translate(176 50)"><ellipse rx="4.2" ry="3.2" transform="rotate(-20)"/><path d="M3.6-1V-17q5 2 6.5 7" fill="none" stroke="#fcd34d" stroke-width="1.6"/></g></g>
+    <g class="note"><g transform="translate(226 46)"><ellipse rx="4.2" ry="3.2" transform="rotate(-20)"/><path d="M3.6-1V-17q5 2 6.5 7" fill="none" stroke="#fcd34d" stroke-width="1.6"/></g></g>
+  </g>
+</svg>
+</header>
 <nav>
-  <a href="#radio">Radio</a><a href="#stacje">Stacje</a><a href="#swiatlo">Podświetlenie</a><a href="#pomoc">Pomoc</a>
+  <a href="#radio">Radio</a><a href="#stacje">Stacje</a><a href="#swiatlo">Światło</a><a href="#wifi">Wi-Fi</a><a href="#pomoc">Pomoc</a>
 </nav>
 <main>
 
@@ -139,6 +279,40 @@ code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding
   </div>
 </section>
 
+<section data-tab="wifi">
+  <div class="card" id="apInfo">
+    <h2>Konfiguracja Wi-Fi</h2>
+    <p id="apReason"></p>
+    <button id="apCancel">Wróć bez zmian</button>
+  </div>
+  <div class="card sta">
+    <h2>Połączenie</h2>
+    <table id="wifiNow"></table>
+    <p class="warn" id="wifiWarn" hidden></p>
+  </div>
+  <div class="card">
+    <h2>Zapamiętane sieci</h2>
+    <ul id="saved"></ul>
+    <p class="muted">Radio pamięta dwie sieci. Przy starcie łączy się z ostatnio używaną, a gdy ta nie odpowiada, z drugą. Dzięki temu pomyłka w haśle nowej sieci nie odcina radia od internetu.</p>
+  </div>
+  <div class="card">
+    <h2>Połącz z siecią</h2>
+    <div class="row"><button id="scan">Szukaj sieci</button><span class="muted" id="scanMsg"></span></div>
+    <ul id="nets" style="margin:8px 0"></ul>
+    <form id="wifiForm">
+      <input type="text" id="ssidIn" placeholder="Nazwa sieci (SSID)" maxlength="32" required autocapitalize="off" autocorrect="off" spellcheck="false">
+      <div class="pw"><input type="password" id="passIn" placeholder="Hasło" maxlength="64" autocomplete="current-password"><button type="button" id="showPw">Pokaż</button></div>
+      <p class="muted" id="passHint" hidden></p>
+      <button class="primary">Zapisz i połącz</button>
+      <p class="muted">Radio uruchomi się ponownie i połączy z tą siecią. Jeśli nie odpowie, wróci do poprzedniej. Sieć ukrytą wpisz ręcznie.</p>
+    </form>
+  </div>
+  <div class="card" id="wifiDone" hidden>
+    <h2>Zapisano</h2>
+    <p id="doneMsg"></p>
+  </div>
+</section>
+
 <section data-tab="pomoc">
   <div class="card">
     <h2>Przyciski na płytce</h2>
@@ -147,7 +321,7 @@ code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding
       <tr><td>Key1</td><td>Ciszej</td><td>Poprzednia stacja</td></tr>
       <tr><td>Key2</td><td>Graj / stop</td><td>Wygaś / przywróć diody na czas grania</td></tr>
       <tr><td>Key3</td><td>Głośniej</td><td>Następna stacja</td></tr>
-      <tr><td>BOOT</td><td>Graj / stop</td><td>3 s: zapomnij Wi-Fi i uruchom konfigurację</td></tr>
+      <tr><td>BOOT</td><td>Graj / stop</td><td>3 s: tryb konfiguracji Wi-Fi (zapisane sieci zostają); w nim 3 s: powrót bez zmian</td></tr>
       <tr><td>RESET</td><td colspan="2">Restart radia (ustawienia zostają)</td></tr>
     </table>
     <p class="muted">Układ jak w słuchawkach Bluetooth: środkowy przycisk graj/stop, zewnętrzne krótko zmieniają głośność, a przytrzymane (ok. 1 s) zmieniają stację.</p>
@@ -164,12 +338,14 @@ code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding
   </div>
   <div class="card">
     <h2>Zmiana sieci Wi-Fi</h2>
+    <p>Najprościej w zakładce Wi-Fi. Gdy radio nie ma dostępu do żadnej zapamiętanej sieci (np. w nowym miejscu), samo wystawia hotspot. Można go też włączyć ręcznie:</p>
     <ol>
-      <li>Przytrzymaj BOOT przez 3 sekundy — radio uruchomi się ponownie.</li>
+      <li>Przytrzymaj BOOT przez 3 sekundy — radio uruchomi się ponownie w trybie konfiguracji (niebieski oddech diod).</li>
       <li>Połącz telefon z siecią <code>Radio-XXXX</code> (bez hasła).</li>
       <li>Strona konfiguracji otworzy się sama, a jeśli nie, wejdź na <code>http://192.168.4.1</code>.</li>
-      <li>Wybierz sieć, wpisz hasło i zapisz. Lista stacji i ustawienia zostają.</li>
+      <li>Wybierz sieć, wpisz hasło i zapisz. Zapisane sieci, lista stacji i ustawienia zostają.</li>
     </ol>
+    <p class="muted">Gdy przez 5 minut nikt nie jest połączony z hotspotem, radio samo wraca do zapamiętanych sieci.</p>
   </div>
   <div class="card">
     <h2>Urządzenie</h2>
@@ -180,7 +356,7 @@ code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding
 </main>
 <script>
 const $=id=>document.getElementById(id);
-let st={},stations=[];
+let st={},stations=[],apMode=false,wifi={saved:[]},openNets=new Set();
 const post=(u,d)=>fetch(u,{method:'POST',body:new URLSearchParams(d||{})});
 const MODES=[
   ['off','Wyłączone','Wszystkie diody zgaszone.'],
@@ -205,18 +381,86 @@ const MODES=[
   ['twins','Dwie komety','Dwie komety w dopełniających się kolorach krążą w przeciwne strony.'],
   ['auto','Pokaz','Efekty zmieniają się same, kolejno, z płynnym przejściem.']];
 
+// Pierścień na rysunku: [kolory 7 diod, animacja]; „hue” kręci barwami całego pierścienia.
+const DIM='#3a2f28',hue=h=>`hsl(${h},100%,55%)`,fill7=c=>Array(7).fill(c);
+const LOOKS={
+  off:()=>[fill7(DIM),''],
+  status:()=>[st.playing?fill7('#1f8f45'):['#ffb000',...fill7(DIM).slice(1)],''],
+  color:c=>[fill7(c),''],
+  breathe:c=>[fill7(c),'breathe'],
+  rainbow:()=>[[0,1,2,3,4,5,6].map(i=>hue(i*51)),'hue'],
+  comet:c=>[fill7(c),'spin'],
+  vu:()=>[['#22c55e','#22c55e','#84cc16','#eab308','#f59e0b','#f97316','#ef4444'],'beat'],
+  pulse:()=>[fill7('#ff3d7f'),'pulse hue'],
+  disco:()=>[['#ff0040','#00e0ff','#ffd000','#8000ff','#00ff60','#ff6a00','#ff00c8'],'beat hue'],
+  rcomet:()=>[fill7('#ff2020'),'spin hue'],
+  wave:c=>[fill7(c),'wave'],
+  sparkle:c=>[fill7(c),'twinkle'],
+  fire:()=>[['#ff2a00','#ff6a00','#ffa000','#ff4500','#ffb300','#ff3000','#ff8000'],'flicker'],
+  police:()=>[['#ff1a1a','#ff1a1a','#ff1a1a','#1a4dff','#1a4dff','#1a4dff','#1a4dff'],'police'],
+  colororgan:()=>[['#ff2020','#ff2020','#20ff40','#20ff40','#2050ff','#2050ff','#2050ff'],'beat'],
+  spectrum:()=>[[0,40,80,140,200,250,285].map(hue),'beat'],
+  confetti:()=>[[0,200,50,300,120,30,260].map(hue),'twinkle hue'],
+  aurora:()=>[['#22c55e','#10b981','#06b6d4','#3b82f6','#8b5cf6','#a855f7','#14b8a6'],'aurora'],
+  bounce:()=>[fill7('#00d0ff'),'bounce hue'],
+  twins:()=>[['#ff3080','#ff3080','#ff3080',DIM,'#30ffd0','#30ffd0','#30ffd0'],'spin']};
+
+function ringLook(){
+  if(apMode)return[fill7('#0040ff'),'breathe'];
+  const L=st.led;if(!L||L.mode==='off')return[fill7(DIM),''];
+  if(st.trouble)return[fill7('#ff5000'),'spin'];
+  if(st.playing&&st.loading)return[fill7('#0040ff'),'spin'];
+  if(st.playing&&L.dark)return[fill7(DIM),''];
+  return(LOOKS[L.mode==='auto'?L.now:L.mode]||LOOKS.color)(L.color);
+}
+
+let heroName='';
+function setHeroName(t){
+  if(t===heroName)return;heroName=t;
+  const e=$('hName');e.textContent=t;e.classList.remove('marq');
+  const over=e.getComputedTextLength()-100;  // przewijanie jak w radiu samochodowym
+  if(over>0){e.style.setProperty('--dx',-(over+4)+'px');e.classList.add('marq')}
+}
+
+function renderHero(){
+  const cur=stations[st.station],n=stations.length,frac=n>1&&!apMode&&st.station>=0?st.station/(n-1):0;
+  $('hero').classList.toggle('playing',!apMode&&!!st.playing&&!st.loading);
+  $('hero').classList.toggle('air',apMode||!!st.playing);
+  $('hNum').textContent=!apMode&&cur?String(st.station+1).padStart(2,'0'):'--';
+  setHeroName(apMode?'USTAW WI-FI':cur?cur.name:'RADIO');
+  $('hState').textContent=apMode?(wifi.hotspot||'HOTSPOT').toUpperCase():!st.playing?'■ STOP':st.trouble?'… SŁABY STRUMIEŃ':st.loading?'ŁĄCZENIE…':`▶ GRA · VOL ${st.volume}`;
+  $('needle').setAttribute('x',255+frac*134);
+  $('knobSt').setAttribute('transform',`rotate(${-135+270*frac} 266 135)`);
+  $('knobVol').setAttribute('transform',`rotate(${-135+270*(apMode?0:(st.volume||0)/21)} 380 135)`);
+  const[cols,anim]=ringLook();
+  document.querySelectorAll('#ring .led').forEach((c,i)=>c.setAttribute('fill',cols[i]));
+  $('ring').setAttribute('class',anim.replace('hue','').trim());
+  $('ringHue').setAttribute('class',anim.includes('hue')?'hue':'');
+  $('ring').style.opacity=st.led&&!apMode?.35+.65*st.led.brightness/255:1;
+}
+
 function showTab(){
-  let id=(location.hash||'#radio').slice(1);
+  let id=apMode?'wifi':(location.hash||'#radio').slice(1);
   if(!document.querySelector(`section[data-tab="${id}"]`))id='radio';
   document.querySelectorAll('section').forEach(s=>s.classList.toggle('on',s.dataset.tab===id));
   document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.hash==='#'+id));
   window.scrollTo(0,0);
+  if(id==='wifi'&&!apMode)wifiInfo();
 }
 window.onhashchange=showTab;showTab();
+
+// Na wąskim ekranie rysunek bez księżyca i części gwiazd, żeby radio było większe.
+const narrow=matchMedia('(max-width:480px)');
+const fitHero=()=>$('heroSvg').setAttribute('viewBox',narrow.matches?'128 0 352 172':'0 0 560 172');
+narrow.onchange=fitHero;fitHero();
 
 async function load(){stations=await (await fetch('/api/stations')).json();render()}
 async function status(){try{st=await (await fetch('/api/status')).json();render()}catch(e){}}
 const play=i=>post('/api/play',{i}).then(status);
+const signal=r=>r>-55?4:r>-67?3:r>-75?2:1;
+const bars=r=>'<svg class="bars" viewBox="0 0 16 14" width="16" height="14">'+[0,1,2,3].map(i=>`<rect x="${i*4}" y="${9-i*3}" width="3" height="${5+i*3}" rx="1" opacity="${i<signal(r)?1:.25}"/>`).join('')+'</svg>';
+const LOCK='<svg class="lock" viewBox="0 0 12 14" width="11" height="13"><rect x="1.5" y="6" width="9" height="7" rx="1.5"/><path d="M3.5 6V4a2.5 2.5 0 0 1 5 0v2"/></svg>';
+function tableRows(t,rows){$(t).innerHTML='';rows.forEach(([k,v,html])=>{const tr=document.createElement('tr');const a=document.createElement('td');a.textContent=k;const b=document.createElement('td');b.textContent=v;if(html)b.insertAdjacentHTML('afterbegin',html+' ');tr.append(a,b);$(t).append(tr)})}
 
 function render(){
   const cur=stations[st.station];
@@ -253,11 +497,107 @@ function render(){
     $('ledDark').checked=!!st.led.dark;
   }
 
-  const rows=[['Adres',st.host?`http://${st.host}`:'—'],['IP',st.ip||'—'],['Wi-Fi',st.rssi!==undefined?`${st.rssi} dBm`+(st.rssi>-67?' (dobry)':st.rssi>-75?' (średni)':' (słaby)'):'—'],
-    ['Bateria',st.battery>=0?`${st.battery}%`:'pomiar niepodłączony']];
-  $('device').innerHTML='';
-  rows.forEach(([k,v])=>{const tr=document.createElement('tr');const a=document.createElement('td');a.textContent=k;const b=document.createElement('td');b.textContent=v;tr.append(a,b);$('device').append(tr)});
+  const rssi=st.rssi!==undefined?`${st.rssi} dBm`+['',' (słaby)',' (średni)',' (dobry)',' (bardzo dobry)'][signal(st.rssi)]:'—';
+  tableRows('device',[['Adres',st.host?`http://${st.host}`:'—'],['IP',st.ip||'—'],['Wi-Fi',st.ssid?`${st.ssid}, ${rssi}`:'—'],
+    ['Bateria',st.battery>=0?`${st.battery}%`:'pomiar niepodłączony']]);
+  tableRows('wifiNow',[['Sieć',st.ssid||'—'],['Sygnał',rssi,st.rssi!==undefined?bars(st.rssi):''],['IP',st.ip||'—'],['Adres',st.host?`http://${st.host}`:'—']]);
+  renderHero();
 }
+
+// ---------- Wi-Fi ----------
+
+async function wifiInfo(){try{wifi=await (await fetch('/api/wifi',{cache:'no-store'})).json();renderWifi()}catch(e){}}
+
+function renderWifi(){
+  const ul=$('saved');ul.innerHTML='';
+  if(!wifi.saved.length)ul.innerHTML='<li class="muted">Brak zapamiętanych sieci.</li>';
+  wifi.saved.forEach((s,i)=>{
+    const li=document.createElement('li');
+    const n=document.createElement('span');n.className='name';n.textContent=s;n.onclick=()=>pick(s);
+    const b=document.createElement('span');b.className='badge'+(s===wifi.connected?' on':'');
+    b.textContent=s===wifi.connected?'połączona':i===0?'główna':'zapasowa';
+    li.append(n,b);
+    if(s!==wifi.connected){
+      const d=document.createElement('button');d.className='del';d.textContent='✕';d.title='Zapomnij';
+      d.onclick=()=>{if(confirm(`Zapomnieć sieć „${s}”?`))post('/api/wifi/forget',{ssid:s}).then(wifiInfo)};
+      li.append(d);
+    }
+    ul.append(li);
+  });
+  $('wifiWarn').hidden=!wifi.failed;
+  $('wifiWarn').textContent=`Nie udało się połączyć z „${wifi.failed}”, więc radio wróciło do „${wifi.connected}”. Sprawdź nazwę sieci i hasło.`;
+  const list=wifi.saved.map(s=>`„${s}”`).join(' ani ');
+  $('apReason').textContent={
+    button:'Tryb konfiguracji włączyło przytrzymanie BOOT. Zapamiętane sieci zostały: możesz dodać nową albo wrócić bez zmian (to samo robi ponowne przytrzymanie BOOT).',
+    failed:`Radio nie połączyło się z ${list}. Sprawdź router albo wybierz inną sieć.`,
+    none:'Wybierz sieć Wi-Fi, z którą radio ma się łączyć.'}[wifi.reason]+
+    (wifi.saved.length?' Gdy przez 5 minut nikt nie będzie połączony z hotspotem, radio samo wróci do zapamiętanych sieci.':'');
+  $('apCancel').hidden=!wifi.saved.length;
+  passHint();
+}
+
+function passHint(){
+  const s=$('ssidIn').value,h=$('passHint');
+  h.textContent=openNets.has(s)?'Sieć otwarta, bez hasła.':wifi.saved.includes(s)?'Zostaw hasło puste, żeby zachować zapamiętane.':'';
+  h.hidden=!h.textContent;
+}
+function pick(ssid){$('ssidIn').value=ssid;$('passIn').value='';passHint();
+  document.querySelectorAll('#nets li').forEach(li=>li.classList.toggle('on',li.dataset.ssid===ssid));$('passIn').focus()}
+
+async function scan(){
+  $('scan').disabled=true;$('scanMsg').textContent='Szukam sieci…';
+  try{
+    for(let k=0;k<25;k++){
+      const r=await (await fetch('/api/scan',{cache:'no-store'})).json();
+      if(Array.isArray(r)){showNets(r);break}
+      await new Promise(f=>setTimeout(f,700));
+    }
+  }catch(e){}
+  $('scan').disabled=false;$('scanMsg').textContent='';
+}
+
+function showNets(list){
+  const best={};list.forEach(n=>{if(n.ssid&&(!best[n.ssid]||best[n.ssid].rssi<n.rssi))best[n.ssid]=n});
+  const nets=Object.values(best).sort((a,b)=>b.rssi-a.rssi);
+  openNets=new Set(nets.filter(n=>!n.lock).map(n=>n.ssid));
+  const ul=$('nets');ul.innerHTML='';
+  if(!nets.length)ul.innerHTML='<li class="muted">Nie znaleziono sieci.</li>';
+  nets.forEach(n=>{
+    const li=document.createElement('li');li.dataset.ssid=n.ssid;li.innerHTML=bars(n.rssi);
+    const s=document.createElement('span');s.className='name';s.textContent=n.ssid;
+    const m=document.createElement('span');m.className='muted';m.textContent=`${n.rssi} dBm`;
+    if(n.lock)m.insertAdjacentHTML('afterbegin',LOCK+' ');
+    li.append(s,m);
+    if(wifi.saved.includes(n.ssid)){const b=document.createElement('span');b.className='badge';b.textContent='zapamiętana';li.insertBefore(b,m)}
+    li.onclick=()=>pick(n.ssid);ul.append(li);
+  });
+  passHint();
+}
+
+function wifiDone(msg,reload){
+  $('doneMsg').textContent=msg;$('wifiDone').hidden=false;$('wifiDone').scrollIntoView({behavior:'smooth'});
+  if(!reload)return;
+  setTimeout(()=>{const t=setInterval(async()=>{try{if((await fetch('/api/status',{cache:'no-store'})).ok){clearInterval(t);location.reload()}}catch(e){}},2000)},6000);
+}
+
+$('scan').onclick=scan;
+$('ssidIn').oninput=passHint;
+$('showPw').onclick=()=>{const p=$('passIn'),show=p.type==='password';p.type=show?'text':'password';$('showPw').textContent=show?'Ukryj':'Pokaż'};
+$('wifiForm').onsubmit=async e=>{
+  e.preventDefault();
+  const ssid=$('ssidIn').value,pass=$('passIn').value,d={ssid,pass};
+  if(!pass&&!openNets.has(ssid)){
+    if(wifi.saved.includes(ssid))d.keep=1;
+    else if(!confirm(`Połączyć z siecią „${ssid}” bez hasła?`))return;
+  }
+  const r=await (await post('/api/wifi',d)).json();
+  if(r.error){alert('Nie zapisano: '+r.error);return}
+  if(apMode)wifiDone(`Radio łączy się z siecią „${ssid}”. Połącz telefon z tą samą siecią i otwórz http://radio.local.`);
+  else wifiDone(`Radio uruchamia się ponownie i łączy z siecią „${ssid}”. Strona odświeży się sama, gdy radio wróci (do ok. 40 s). Jeśli telefon jest w innej sieci, przełącz go i otwórz http://radio.local.`,true);
+};
+$('apCancel').onclick=()=>post('/api/wifi/cancel').then(()=>wifiDone('Radio wraca do zapamiętanych sieci. Połącz telefon z domową siecią i za chwilę otwórz http://radio.local.'));
+
+// ---------- sterowanie ----------
 
 $('toggle').onclick=()=>post(st.playing?'/api/stop':'/api/play',st.playing?{}:{i:Math.max(0,st.station)}).then(status);
 $('prev').onclick=()=>stations.length&&play((st.station-1+stations.length)%stations.length);
@@ -276,34 +616,11 @@ $('ledBright').onchange=e=>post('/api/led',{brightness:e.target.value}).then(sta
 $('ledAuto').oninput=e=>$('ledAutov').textContent=e.target.value+' s';
 $('ledAuto').onchange=e=>post('/api/led',{auto:e.target.value}).then(status);
 $('ledDark').onchange=e=>post('/api/led',{dark:e.target.checked?1:0}).then(status);
-load().then(status);setInterval(status,3000);
-</script></body></html>)HTML";
 
-// Strona konfiguracji Wi-Fi (tryb punktu dostępowego).
-static const char SETUP_HTML[] PROGMEM = R"HTML(<!doctype html>
-<html lang="pl"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Radio – Wi-Fi</title>
-<link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<meta name="theme-color" content="#2563eb">
-<style>
-body{margin:0;background:#f4f5f7;color:#1d2330;font:16px/1.4 system-ui,sans-serif}
-main{max-width:420px;margin:0 auto;padding:16px}
-form{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;display:grid;gap:10px}
-input,select,button{font:inherit;padding:8px;border:1px solid #d1d5db;border-radius:8px;width:100%}
-button{background:#2563eb;color:#fff;border-color:#2563eb;cursor:pointer}
-</style></head><body><main>
-<h1>Radio – konfiguracja Wi-Fi</h1>
-<form method="post" action="/api/wifi">
-  <label>Sieć<select name="ssid" id="ssid"><option>Szukam sieci…</option></select></label>
-  <label>Hasło<input type="password" name="pass" autocomplete="current-password"></label>
-  <button>Zapisz i uruchom ponownie</button>
-</form>
-<p>Po restarcie radio będzie pod adresem <b>http://radio.local</b>.</p>
-</main>
-<script>
-fetch('/api/scan').then(r=>r.json()).then(list=>{
-  const s=document.getElementById('ssid');s.innerHTML='';
-  list.forEach(n=>{const o=document.createElement('option');o.value=n.ssid;o.textContent=`${n.ssid} (${n.rssi} dBm)`;s.append(o)});
-});
+(async()=>{
+  await wifiInfo();
+  apMode=!!wifi.ap;
+  if(apMode){document.body.classList.add('ap');showTab();renderHero();scan()}
+  else{load().then(status);setInterval(status,3000)}
+})();
 </script></body></html>)HTML";

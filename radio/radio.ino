@@ -5,12 +5,15 @@
 //   Key1  krótko = ciszej,  przytrzymanie = poprzednia stacja
 //   Key2  krótko = graj/stop, przytrzymanie = wygaś/przywróć diody na czas grania
 //   Key3  krótko = głośniej, przytrzymanie = następna stacja
-//   BOOT  krótko = graj/stop, przytrzymanie 3 s = zapomnij Wi-Fi i uruchom konfigurację
+//   BOOT  krótko = graj/stop, przytrzymanie 3 s = tryb konfiguracji Wi-Fi (zapisane sieci zostają),
+//         w trybie konfiguracji przytrzymanie 3 s = powrót bez zmian
 // Przy starcie i zmianie stacji radio wypowiada jej numer (nagrania 1..40 wbudowane w firmware,
 // przy starcie zapisywane na partycję FFat; stacje 41..99 grają bez zapowiedzi). Od wybrania stacji do pierwszych dźwięków
 // diody pokazują niebieską kometę.
 // Bez zapisanej sieci (albo gdy połączenie się nie uda) radio wystawia hotspot "Radio-XXXX",
-// a konfiguracja Wi-Fi jest pod http://192.168.4.1.
+// a konfiguracja Wi-Fi jest pod http://192.168.4.1. Sieć można też zmienić na stronie (zakładka Wi-Fi).
+// Radio pamięta dwie sieci: ostatnio użytą i poprzednią, więc literówka w haśle nowej sieci
+// nie odcina go od internetu.
 
 #include <Arduino.h>
 #include <DNSServer.h>
@@ -34,7 +37,9 @@ static const uint32_t RECONNECT_DELAY_MS = 5000;
 static const uint32_t ANNOUNCE_STALL_MS = 1500;
 static const uint32_t LOADING_SLOW_MS = 8000;      // dłuższe ładowanie = kłopot (pomarańczowa kometa)
 static const uint32_t SLOW_STREAM_SHOW_MS = 3000;  // „slow stream” przychodzi co 2 s, póki bufor pusty
-static const uint32_t WIFI_RESET_PRESS_MS = 3000;
+static const uint32_t WIFI_SETUP_PRESS_MS = 3000;
+static const uint32_t SETUP_IDLE_RESTART_MS = 5 * 60 * 1000;  // hotspot bez gości = ponowna próba Wi-Fi
+static const uint32_t RESTART_DELAY_MS = 1000;  // czas na wysłanie odpowiedzi przed restartem
 static const uint32_t KEY_POLL_MS = 20;
 static const uint32_t BATTERY_POLL_MS = 10000;
 static const size_t MAX_STATIONS = 99;  // zapowiedź numeru tylko do STATION_NUMBER_COUNT
@@ -101,6 +106,13 @@ int currentStation = 0;
 bool playing = false;  // stan zamierzony przez użytkownika
 uint8_t volume = 8;    // 0..21
 bool apMode = false;
+// Dlaczego radio jest w trybie konfiguracji (zadeklarowane przed funkcjami ze względu na prototypy Arduino).
+enum class SetupReason : uint8_t { NoNetwork, ConnectFailed, Button };
+SetupReason setupReason = SetupReason::NoNetwork;
+String wifiSsid;           // sieć, z którą radio jest połączone
+String hotspotSsid;        // nazwa hotspotu w trybie konfiguracji
+String wifiFailedSsid;     // sieć główna, która przy tym starcie nie odpowiedziała (radio wzięło zapasową)
+uint32_t restartAtMs = 0;  // zaplanowany restart (0 = brak)
 uint32_t lastStreamOkMs = 0;
 int battery = -1;
 
@@ -485,9 +497,11 @@ void handleStatus() {
                 ",\"title\":\"" + jsonEscape(title()) + "\"" +
                 ",\"ip\":\"" + WiFi.localIP().toString() + "\"" +
                 ",\"rssi\":" + WiFi.RSSI() +
+                ",\"ssid\":\"" + jsonEscape(wifiSsid) + "\"" +
                 ",\"host\":\"" + HOSTNAME + ".local\"" +
                 ",\"battery\":" + battery +
                 ",\"loading\":" + (loading ? "true" : "false") +
+                ",\"trouble\":" + (streamTroubleNow() ? "true" : "false") +
                 ",\"announce\":" + (announceEnabled ? "true" : "false") + ledJson() + "}";
   server.send(200, "application/json", json);
 }
@@ -564,28 +578,65 @@ void handleResetStations() {
   sendOk();
 }
 
+// Skanowanie w tle: blokujące wstrzymałoby stronę, przyciski i diody na ok. 3 s. Strona pyta
+// co chwilę, aż zamiast {"scanning":true} dostanie listę sieci.
 void handleScan() {
-  int n = WiFi.scanNetworks();
+  int n = WiFi.scanComplete();
+  if (n < 0) {
+    if (n != WIFI_SCAN_RUNNING) WiFi.scanNetworks(true);
+    return server.send(200, "application/json", "{\"scanning\":true}");
+  }
   String json = "[";
   for (int i = 0; i < n; i++) {
     if (i) json += ',';
-    json += "{\"ssid\":\"" + jsonEscape(WiFi.SSID(i)) + "\",\"rssi\":" + WiFi.RSSI(i) + "}";
+    json += "{\"ssid\":\"" + jsonEscape(WiFi.SSID(i)) + "\",\"rssi\":" + WiFi.RSSI(i) +
+            ",\"lock\":" + (WiFi.encryptionType(i) == WIFI_AUTH_OPEN ? "false" : "true") + "}";
   }
   json += ']';
   WiFi.scanDelete();
   server.send(200, "application/json", json);
 }
 
+void handleWifiInfo() {
+  static const char* REASONS[] = {"none", "failed", "button"};
+  String json = String("{\"ap\":") + (apMode ? "true" : "false") + ",\"connected\":\"" +
+                jsonEscape(wifiSsid) + "\",\"saved\":[";
+  String ssid = prefs.getString("ssid", ""), ssid2 = prefs.getString("ssid2", "");
+  if (!ssid.isEmpty()) json += "\"" + jsonEscape(ssid) + "\"";
+  if (!ssid2.isEmpty()) json += String(ssid.isEmpty() ? "" : ",") + "\"" + jsonEscape(ssid2) + "\"";
+  json += String("],\"failed\":\"") + jsonEscape(wifiFailedSsid) + "\",\"hotspot\":\"" + hotspotSsid +
+          "\",\"reason\":\"" + REASONS[(int)setupReason] + "\"}";
+  server.send(200, "application/json", json);
+}
+
 void handleSaveWifi() {
   String ssid = server.arg("ssid");
-  if (ssid.isEmpty()) return sendError("wybierz siec");
-  prefs.putString("ssid", ssid);
-  prefs.putString("pass", server.arg("pass"));
-  server.send(200, "text/html; charset=utf-8",
-              "<meta charset=utf-8><p>Zapisano. Radio uruchamia się ponownie – za chwilę otwórz "
-              "<a href='http://radio.local'>http://radio.local</a>.</p>");
-  delay(500);
-  ESP.restart();
+  String pass = server.arg("pass");
+  if (ssid.isEmpty() || ssid.length() > 32) return sendError("podaj nazwe sieci (do 32 znakow)");
+  if (pass.isEmpty() && server.arg("keep") == "1") pass = savedWifiPassword(ssid);
+  if (!pass.isEmpty() && (pass.length() < 8 || pass.length() > 64)) return sendError("haslo Wi-Fi ma od 8 do 64 znakow");
+  rememberWifi(ssid, pass);
+  Serial.printf("Nowa sieć Wi-Fi \"%s\", restart\n", ssid.c_str());
+  sendOk();
+  restartAtMs = millis() + RESTART_DELAY_MS;
+}
+
+// Zapomina sieć, z którą radio nie jest teraz połączone.
+void handleForgetWifi() {
+  String ssid = server.arg("ssid");
+  if (ssid == wifiSsid) return sendError("tej sieci radio teraz uzywa");
+  if (ssid == prefs.getString("ssid2", "")) {
+    prefs.remove("ssid2");
+    prefs.remove("pass2");
+  } else if (ssid == prefs.getString("ssid", "")) {  // zapasowa zostaje jedyną
+    prefs.putString("ssid", prefs.getString("ssid2", ""));
+    prefs.putString("pass", prefs.getString("pass2", ""));
+    prefs.remove("ssid2");
+    prefs.remove("pass2");
+  } else {
+    return sendError("nie ma takiej sieci");
+  }
+  sendOk();
 }
 
 void sendFavicon() {
@@ -596,17 +647,23 @@ void sendFavicon() {
 void setupRoutes() {
   server.on("/favicon.svg", HTTP_GET, sendFavicon);
   server.on("/favicon.ico", HTTP_GET, sendFavicon);
+  // Ta sama strona w obu trybach; w trybie konfiguracji pokazuje tylko zakładkę Wi-Fi.
+  server.on("/", HTTP_GET, [] { server.send_P(200, "text/html; charset=utf-8", INDEX_HTML); });
+  server.on("/api/scan", HTTP_GET, handleScan);
+  server.on("/api/wifi", HTTP_GET, handleWifiInfo);
+  server.on("/api/wifi", HTTP_POST, handleSaveWifi);
+  server.on("/api/wifi/forget", HTTP_POST, handleForgetWifi);
   if (apMode) {
-    server.on("/", HTTP_GET, [] { server.send_P(200, "text/html; charset=utf-8", SETUP_HTML); });
-    server.on("/api/scan", HTTP_GET, handleScan);
-    server.on("/api/wifi", HTTP_POST, handleSaveWifi);
+    server.on("/api/wifi/cancel", HTTP_POST, [] {  // powrót do zapisanych sieci bez zmian
+      sendOk();
+      restartAtMs = millis() + RESTART_DELAY_MS;
+    });
     // captive portal: każdy adres prowadzi do strony konfiguracji
     server.onNotFound([] {
       server.sendHeader("Location", "http://192.168.4.1/");
       server.send(302, "text/plain", "");
     });
   } else {
-    server.on("/", HTTP_GET, [] { server.send_P(200, "text/html; charset=utf-8", INDEX_HTML); });
     server.on("/api/status", HTTP_GET, handleStatus);
     server.on("/api/stations", HTTP_GET, handleStations);
     server.on("/api/play", HTTP_POST, handlePlay);
@@ -628,12 +685,33 @@ void setupRoutes() {
 
 // ---------- Wi-Fi ----------
 
-bool connectWifi() {
-  String ssid = prefs.getString("ssid", "");
-  if (ssid.isEmpty()) return false;
-  WiFi.mode(WIFI_STA);
-  WiFi.setHostname(HOSTNAME);
-  WiFi.begin(ssid.c_str(), prefs.getString("pass", "").c_str());
+// Dwie zapamiętane sieci: główna (ssid/pass) i zapasowa (ssid2/pass2). Zapisywana sieć zostaje
+// główną, a dotychczasowa główna zapasową.
+void rememberWifi(const String& ssid, const String& pass) {
+  String oldSsid = prefs.getString("ssid", "");
+  if (oldSsid != ssid) {
+    if (!oldSsid.isEmpty()) {
+      prefs.putString("ssid2", oldSsid);
+      prefs.putString("pass2", prefs.getString("pass", ""));
+    } else if (prefs.getString("ssid2", "") == ssid) {
+      prefs.remove("ssid2");
+      prefs.remove("pass2");
+    }
+  }
+  prefs.putString("ssid", ssid);
+  prefs.putString("pass", pass);
+}
+
+String savedWifiPassword(const String& ssid) {
+  if (ssid == prefs.getString("ssid", "")) return prefs.getString("pass", "");
+  if (ssid == prefs.getString("ssid2", "")) return prefs.getString("pass2", "");
+  return "";
+}
+
+bool hasSavedWifi() { return !prefs.getString("ssid", "").isEmpty() || !prefs.getString("ssid2", "").isEmpty(); }
+
+bool tryWifi(const String& ssid, const String& pass) {
+  WiFi.begin(ssid.c_str(), pass.c_str());
   Serial.printf("Łączę z Wi-Fi \"%s\"", ssid.c_str());
   uint32_t start = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - start < WIFI_CONNECT_TIMEOUT_MS) {
@@ -641,23 +719,61 @@ bool connectWifi() {
     Serial.print('.');
   }
   Serial.println();
-  if (WiFi.status() != WL_CONNECTED) return false;
+  if (WiFi.status() == WL_CONNECTED) return true;
+  WiFi.disconnect();
+  return false;
+}
+
+// Najpierw sieć główna, potem zapasowa; ta, która zadziała, zostaje główną (przy przenoszeniu
+// radia między dwoma miejscami tylko pierwszy start w nowym miejscu czeka na nieudaną próbę).
+bool connectWifi() {
+  String ssid = prefs.getString("ssid", ""), ssid2 = prefs.getString("ssid2", "");
+  if (ssid.isEmpty() && ssid2.isEmpty()) return false;
+  WiFi.mode(WIFI_STA);
+  WiFi.setHostname(HOSTNAME);
+  if (!ssid.isEmpty() && tryWifi(ssid, prefs.getString("pass", ""))) {
+    wifiSsid = ssid;
+  } else if (!ssid2.isEmpty() && tryWifi(ssid2, prefs.getString("pass2", ""))) {
+    wifiSsid = ssid2;
+    wifiFailedSsid = ssid;
+    rememberWifi(ssid2, prefs.getString("pass2", ""));
+  } else {
+    return false;
+  }
   WiFi.setSleep(false);  // płynniejszy strumień
   WiFi.setAutoReconnect(true);
   return true;
 }
 
-void startAccessPoint() {
+void startAccessPoint(SetupReason reason) {
   apMode = true;
+  setupReason = reason;
+  WiFi.disconnect();
   WiFi.mode(WIFI_AP_STA);  // STA potrzebne do skanowania sieci
   uint8_t mac[6];
   esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
   char apName[20];
   snprintf(apName, sizeof(apName), "Radio-%02X%02X", mac[4], mac[5]);
+  hotspotSsid = apName;
   WiFi.softAP(apName);
   dns.start(53, "*", WiFi.softAPIP());
   Serial.printf("Tryb konfiguracji: połącz się z \"%s\" i otwórz http://%s\n", apName,
                 WiFi.softAPIP().toString().c_str());
+}
+
+// Hotspot po nieudanym łączeniu (np. router wstaje dłużej niż radio po zaniku prądu) albo
+// włączony przyciskiem i zapomniany: gdy nikt nie jest z nim połączony przez 5 minut,
+// radio uruchamia się ponownie i znów próbuje zapisanych sieci.
+void checkSetupIdle() {
+  static uint32_t lastCheck = 0, lastGuestMs = 0;
+  uint32_t now = millis();
+  if (!apMode || now - lastCheck < 1000) return;
+  lastCheck = now;
+  if (lastGuestMs == 0 || WiFi.softAPgetStationNum() > 0) lastGuestMs = now;
+  else if (now - lastGuestMs > SETUP_IDLE_RESTART_MS && hasSavedWifi()) {
+    Serial.println("Nikt nie konfiguruje Wi-Fi – ponawiam łączenie z zapisaną siecią");
+    ESP.restart();
+  }
 }
 
 // ---------- przyciski ----------
@@ -695,7 +811,7 @@ struct Button {
   }
 };
 
-Button bootButton(WIFI_RESET_PRESS_MS);
+Button bootButton(WIFI_SETUP_PRESS_MS);
 // Układ jak w słuchawkach Bluetooth: zewnętrzne krótko = głośność, długo = stacja.
 Button key1(800);
 Button key2(1000);
@@ -719,9 +835,13 @@ void handleButtons() {
 
   ButtonEvent boot = bootButton.update(digitalRead(board::BOOT_BUTTON) == LOW, now);
   if (boot == ButtonEvent::LongPress) {
-    Serial.println("Zapominam Wi-Fi i uruchamiam konfigurację");
-    prefs.remove("ssid");
-    prefs.remove("pass");
+    // Zapisane sieci zostają; flaga mówi następnemu startowi, żeby od razu wystawił hotspot.
+    if (apMode) {
+      Serial.println("Wychodzę z konfiguracji Wi-Fi bez zmian");
+    } else {
+      Serial.println("Uruchamiam konfigurację Wi-Fi (zapisane sieci zostają)");
+      prefs.putBool("setupOnce", true);
+    }
     delay(200);
     ESP.restart();
   }
@@ -752,15 +872,19 @@ void handleButtons() {
 
 // ---------- diody ----------
 
+bool streamTroubleNow() {
+  bool starving = slowStreamMs && millis() - slowStreamMs < SLOW_STREAM_SHOW_MS;
+  return playing && ((loading && streamTrouble) || starving);
+}
+
 void updateLeds() {
   if (apMode) leds::setState(leds::State::Setup);
   else if (!playing) leds::setState(leds::State::Stopped);
   else {
     if (loading && millis() - loadingStartMs > LOADING_SLOW_MS) streamTrouble = true;
-    bool starving = slowStreamMs && millis() - slowStreamMs < SLOW_STREAM_SHOW_MS;
-    leds::setState((loading && streamTrouble) || starving ? leds::State::Trouble
-                   : loading                              ? leds::State::Loading
-                                                          : leds::State::Playing);
+    leds::setState(streamTroubleNow() ? leds::State::Trouble
+                   : loading          ? leds::State::Loading
+                                      : leds::State::Playing);
   }
 
   static uint32_t lastBatteryPoll = 0;
@@ -789,6 +913,8 @@ void setup() {
   currentStation = constrain(prefs.getInt("station", 0), 0, (int)stations.size() - 1);
   volume = prefs.getUChar("volume", 8);
   bool resume = prefs.getBool("playing", true);
+  bool setupOnce = prefs.getBool("setupOnce", false);  // przytrzymany BOOT przed restartem
+  if (setupOnce) prefs.remove("setupOnce");
   announceEnabled = prefs.getBool("announce", true);
 
   leds::begin(board::LED_PIN, board::LED_COUNT);  // od razu animacja startowa
@@ -813,7 +939,7 @@ void setup() {
   // Duży stos: uzgadnianie SSL dzieje się w tym zadaniu.
   xTaskCreatePinnedToCore(audioTask, "audio", 16384, nullptr, 1, nullptr, 1);
 
-  if (connectWifi()) {
+  if (!setupOnce && connectWifi()) {
     Serial.printf("Połączono, IP: %s\n", WiFi.localIP().toString().c_str());
     if (MDNS.begin(HOSTNAME)) {
       MDNS.addService("http", "tcp", 80);
@@ -822,7 +948,9 @@ void setup() {
     setupRoutes();
     if (resume) play(currentStation);
   } else {
-    startAccessPoint();
+    startAccessPoint(setupOnce        ? SetupReason::Button
+                     : hasSavedWifi() ? SetupReason::ConnectFailed
+                                      : SetupReason::NoNetwork);
     setupRoutes();
   }
 }
@@ -830,6 +958,8 @@ void setup() {
 void loop() {
   server.handleClient();
   if (apMode) dns.processNextRequest();
+  checkSetupIdle();
+  if (restartAtMs && (int32_t)(millis() - restartAtMs) >= 0) ESP.restart();
   handleButtons();
   keepStreamAlive();
   updateLeds();
