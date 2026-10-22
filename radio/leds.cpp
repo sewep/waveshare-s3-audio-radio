@@ -48,9 +48,17 @@ struct Env {
 };
 
 // Głośność: biblioteka podaje pierwiastek z amplitudy, więc głośna, skompresowana muzyka (EDM)
-// stoi prawie przy maksimum; kwadrat przywraca dynamikę.
-Env music;
-bool beat = false;  // w tej klatce wypadło uderzenie
+// stoi prawie przy maksimum; kwadrat przywraca dynamikę. Dno to minimum z ostatnich ok. 0,6 s
+// (jedno uderzenie), sufit to maksimum z ok. 2 s, więc pasek przechodzi cały zakres przy każdym
+// uderzeniu, nawet gdy muzyka jest stale głośna. Druga potęga rozciąga dół paska. Dobrane na
+// poziomach nagranych z radia (RauteMusik Club, 2026-10-22): wcześniej dolne diody prawie nigdy
+// nie gasły, teraz liczba świecących rozkłada się równo od 0 do 7.
+constexpr int MUSIC_LO_FRAMES = 20;  // 0,6 s przy klatce 30 ms
+constexpr int MUSIC_HI_FRAMES = 66;  // 2 s
+float musicHist[MUSIC_HI_FRAMES];
+int musicPos = 0;
+float musicLevel = 0;  // 0..1, to pokazują efekty
+bool beat = false;     // w tej klatce wypadło uderzenie
 bool beatArmed = true;
 uint32_t lastBeatMs = 0;
 
@@ -154,7 +162,19 @@ void updateSpectrum() {
 
 void updateMusic(uint32_t t) {
   float in = curState == State::Playing ? vuInput : 0;
-  float level = music.update(in * in / 255.0f, 24.0f);
+  float x = in * in / 255.0f;
+  musicHist[musicPos] = x;
+  musicPos = (musicPos + 1) % MUSIC_HI_FRAMES;
+  float lo = x, hi = x;
+  for (int k = 0; k < MUSIC_HI_FRAMES; k++) {
+    float h = musicHist[(musicPos - 1 - k + MUSIC_HI_FRAMES) % MUSIC_HI_FRAMES];
+    if (k < MUSIC_LO_FRAMES) lo = min(lo, h);
+    hi = max(hi, h);
+  }
+  // Ostatni czynnik wygasza pasek przy ciszy i bardzo cichym graniu.
+  float level = constrain((x - lo) / max(hi - lo, 24.0f), 0.0f, 1.0f) * min(1.0f, x / 24.0f);
+  float shown = level * level;
+  musicLevel = shown > musicLevel ? shown : musicLevel * 0.7f + shown * 0.3f;
   // Uderzenie: skok powyżej 70% zakresu po spadku poniżej 35%, nie częściej niż co 180 ms.
   beat = false;
   if (level < 0.35f) {
@@ -167,7 +187,7 @@ void updateMusic(uint32_t t) {
 }
 
 void renderVu() {
-  float lit = music.level * ledCount;
+  float lit = musicLevel * ledCount;
   for (int i = 0; i < ledCount; i++) {
     float k = constrain(lit - i, 0.0f, 1.0f);
     uint16_t h = 21845 - 21845 * i / max(1, ledCount - 1);  // zielony -> czerwony
@@ -225,13 +245,13 @@ void renderPulse() {
     pulseHue += 9000;
   }
   pulse *= 0.88f;
-  fill(hue(pulseHue, 0.05f + 0.95f * max(pulse, music.level * 0.4f)));
+  fill(hue(pulseHue, 0.05f + 0.95f * max(pulse, musicLevel * 0.4f)));
 }
 
 void renderDisco() {
   if (beat)
     for (int i = 0; i < ledCount; i++) discoHue[i] = random(65536);
-  for (int i = 0; i < ledCount; i++) strip->setPixelColor(i, hue(discoHue[i], 0.2f + 0.8f * music.level));
+  for (int i = 0; i < ledCount; i++) strip->setPixelColor(i, hue(discoHue[i], 0.2f + 0.8f * musicLevel));
 }
 
 // Jak żarówki w dawnym kolorofonie: czerwone, zielone i niebieskie na przemian.
