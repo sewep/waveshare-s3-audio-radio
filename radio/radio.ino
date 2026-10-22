@@ -3,8 +3,10 @@
 //
 // Przyciski (jak w słuchawkach Bluetooth):
 //   Key1  krótko = ciszej,  przytrzymanie = poprzednia stacja
-//   Key2  krótko = graj/stop, przytrzymanie = wygaś/przywróć diody na czas grania
+//   Key2  krótko = graj/stop, dwa razy szybko = następna ulubiona stacja,
+//         przytrzymanie = wygaś/przywróć diody na czas grania
 //   Key3  krótko = głośniej, przytrzymanie = następna stacja
+//   Key1 + Key3 razem = wyłącznik czasowy 30 → 60 → 90 min → wyłączony
 //   BOOT  krótko = następny tryb diod, przytrzymanie 3 s = tryb konfiguracji Wi-Fi (zapisane sieci zostają),
 //         w trybie konfiguracji przytrzymanie 3 s = powrót bez zmian
 // Przy starcie i zmianie stacji radio wypowiada jej numer (nagrania 1..40 wbudowane w firmware,
@@ -14,6 +16,10 @@
 // a konfiguracja Wi-Fi jest pod http://192.168.4.1. Sieć można też zmienić na stronie (zakładka Wi-Fi).
 // Radio pamięta dwie sieci: ostatnio użytą i poprzednią, więc literówka w haśle nowej sieci
 // nie odcina go od internetu. Każda z nich może mieć stały adres IP zamiast DHCP.
+// Budzik (czas z NTP): świt na diodach przed czasem, stacja z narastającą głośnością, a gdy
+// stacja nie zagra w 30 s, pikanie z pliku. Wyłącznik czasowy wycisza muzykę przez ostatnią minutę.
+// Dwa klaśnięcia włączają i zatrzymują radio (mics.cpp; muzyka z głośnika podnosi próg).
+// Zakładka Radio pokazuje też barwę dźwięku (filtry biblioteki) i ostatnio grane tytuły (w RAM).
 // Zakładka Stan pokazuje dane strumienia, Wi-Fi i systemu oraz poziomy dźwięku: wyjście na
 // głośnik (po regulacji głośności) i oba mikrofony.
 
@@ -25,6 +31,7 @@
 #include <WebServer.h>
 #include <WiFi.h>
 #include <esp_mac.h>
+#include <time.h>
 #include <vector>
 
 #include "Audio.h"
@@ -51,10 +58,21 @@ static const uint32_t BATTERY_POLL_MS = 10000;
 static const size_t MAX_STATIONS = 99;  // zapowiedź numeru tylko do STATION_NUMBER_COUNT
 static const char* STATIONS_FILE = "/stations.tsv";
 static const char* STATIONS_TMP_FILE = "/stations.tmp";
+static const char* TIME_ZONE = "CET-1CEST,M3.5.0,M10.5.0/3";  // Polska, z czasem letnim
+static const uint32_t DOUBLE_CLICK_MS = 350;
+static const uint32_t SLEEP_FADE_MS = 60000;      // ostatnia minuta wyłącznika: muzyka cichnie
+static const uint32_t ALARM_FALLBACK_MS = 30000;  // budzik bez muzyki po 30 s = sygnał z pliku
+static const uint32_t ALARM_MAX_MS = 60 * 60 * 1000UL;  // nietknięty budzik gra najwyżej godzinę
+static const uint32_t SUNRISE_HOLD_MS = 30 * 60 * 1000UL;
+static const uint32_t BEEP_REPEAT_MS = 2200;
+static const char* BEEP_FILE = "/beep2.wav";  // nowa nazwa = nowy plik po zmianie dźwięku
+static const size_t HISTORY_SIZE = 20;
+static const uint32_t CLAP_SUPPRESS_MS = 1500;  // trzask głośnika przy starcie / zatrzymaniu
 
 struct Station {
   String name;
   String url;
+  bool fav = false;  // ulubiona: przełącza ją podwójne kliknięcie Key2
 };
 
 #define BBC_HLS \
@@ -133,6 +151,43 @@ struct IpConfig {
 uint32_t lastStreamOkMs = 0;
 int battery = -1;
 
+int8_t tone3[3] = {0, 0, 0};  // barwa dźwięku: bas, środek, wysokie, -12..+12 dB
+
+// Budzik. days: bit = dzień tygodnia (0 = niedziela, jak tm_wday); 0 = jednorazowo.
+struct AlarmConfig {
+  bool on = false;
+  uint8_t hour = 7, minute = 0, days = 0x3E;  // pon–pt
+  int station = -1;                           // -1 = ostatnio słuchana
+  uint8_t volume = 8;
+  uint8_t rampMin = 5;      // narastanie głośności
+  uint8_t sunriseMin = 10;  // świt na diodach przed budzikiem; 0 = bez
+};
+AlarmConfig alarmCfg;
+// Budzik, który właśnie dzwoni: narastanie głośności, świt i sygnał zastępczy.
+struct AlarmRun {
+  bool ramping = false;  // głośność rośnie
+  bool active = false;   // budzik gra i nikt go jeszcze nie dotknął
+  bool beeping = false;  // stacja nie ruszyła: sygnał z pliku
+  bool sunrise = false;  // świt trwa (przed budzikiem i po nim)
+  uint32_t startMs = 0, beepMs = 0, sunriseUntilMs = 0;
+  uint8_t fromVol = 1;
+  int32_t firedKey = -1;  // minuta, w której budzik już zadzwonił
+};
+AlarmRun alarmRun;
+
+uint32_t sleepEndMs = 0;     // wyłącznik czasowy; 0 = brak
+uint8_t sleepFadeVol = 255;  // ostatnia głośność wysłana przy wyciszaniu
+
+bool clapEnabled = false;
+uint8_t clapSensitivity = 2;
+
+// Ostatnio grane: tytuły z metadanych strumienia, tylko w RAM. Pisze zadanie audio, czyta strona.
+struct HistoryItem {
+  time_t at;  // 0 = czas nieznany
+  String station, title;
+};
+std::vector<HistoryItem> history;  // najstarszy pierwszy; chroni titleLock
+
 bool announceEnabled = true;  // wypowiadanie numeru stacji
 bool fsReady = false;         // partycja FFat zamontowana
 bool numbersReady = false;    // nagrania liczebników są na FFat
@@ -152,7 +207,7 @@ volatile bool announceReady = false;    // biblioteka zaczęła dekodować zapow
 bool announceRetried = false;
 
 // Polecenia dla zadania audio (zadeklarowane przed funkcjami ze względu na prototypy Arduino).
-enum class AudioCmd : uint8_t { PlayUrl, PlayFile, Stop, Volume };
+enum class AudioCmd : uint8_t { PlayUrl, PlayFile, Stop, Volume, Tone };
 
 struct AudioMsg {
   AudioCmd cmd;
@@ -166,6 +221,8 @@ QueueHandle_t audioQueue;
 SemaphoreHandle_t titleLock;
 String streamTitle;
 String icyName, icyDescription, icyGenre, icyUrl, streamHost;
+String playingName;          // nazwa wybranej stacji dla historii tytułów
+uint32_t historySeq = 0;     // rośnie z każdym nowym tytułem; strona wie, kiedy pobrać listę
 
 // Liczby o strumieniu do zakładki Stan; zadanie audio odświeża je co sekundę (tylko ono
 // woła bibliotekę). Rozerwany odczyt w serwerze WWW niczego nie psuje.
@@ -196,6 +253,23 @@ String title() {
   return t;
 }
 
+bool timeValid() { return time(nullptr) > 1700000000; }  // NTP już odpowiedział
+
+// Zapisuje tytuł w historii; pomija puste, powtórzone i równe nazwie stacji. Z zadania audio.
+void addHistory(const char* t) {
+  String title = t;
+  title.trim();
+  if (title.isEmpty()) return;
+  xSemaphoreTake(titleLock, portMAX_DELAY);
+  String name = playingName;
+  if (!title.equalsIgnoreCase(name) && (history.empty() || history.back().title != title)) {
+    if (history.size() >= HISTORY_SIZE) history.erase(history.begin());
+    history.push_back({timeValid() ? time(nullptr) : 0, name, title});
+    historySeq++;
+  }
+  xSemaphoreGive(titleLock);
+}
+
 void setStreamInfo(String& field, const char* value) {
   xSemaphoreTake(titleLock, portMAX_DELAY);
   field = value;
@@ -216,7 +290,7 @@ String streamInfo(const String& field) {
 // zanik zasilania w trakcie nie zostawił uciętej listy.
 void saveStations() {
   String data;
-  for (auto& s : stations) data += s.name + '\t' + s.url + '\n';
+  for (auto& s : stations) data += s.name + '\t' + s.url + (s.fav ? "\t*" : "") + '\n';
   if (fsReady) {
     File f = FFat.open(STATIONS_TMP_FILE, "w");
     bool ok = f && f.print(data) == data.length();
@@ -249,7 +323,13 @@ void loadStations() {
     int tab = data.indexOf('\t', pos);
     int nl = data.indexOf('\n', pos);
     if (tab < 0 || nl < 0 || tab > nl) break;
-    stations.push_back({data.substring(pos, tab), data.substring(tab + 1, nl)});
+    Station st{data.substring(pos, tab), data.substring(tab + 1, nl)};
+    int tab2 = st.url.indexOf('\t');  // trzecia kolumna "*" = ulubiona
+    if (tab2 >= 0) {
+      st.fav = st.url.substring(tab2 + 1) == "*";
+      st.url.remove(tab2);
+    }
+    stations.push_back(st);
     pos = nl + 1;
   }
   if (stations.empty()) setDefaultStations();
@@ -328,6 +408,7 @@ void prepareNumberClips() {
 // wywołania biblioteki audio (poza ustawieniami w setup()) idą z tego zadania.
 
 void sendAudio(AudioCmd cmd, const char* arg, uint8_t value) {
+  if (cmd == AudioCmd::PlayUrl || cmd == AudioCmd::PlayFile || cmd == AudioCmd::Stop) mics::suppress(CLAP_SUPPRESS_MS);
   AudioMsg msg{cmd, value, ""};
   strlcpy(msg.arg, arg, sizeof(msg.arg));
   if (xQueueSend(audioQueue, &msg, pdMS_TO_TICKS(100)) != pdTRUE) Serial.println("Kolejka audio pełna");
@@ -349,6 +430,7 @@ void runAudioCommand(const AudioMsg& msg) {
       break;
     case AudioCmd::Stop: audio.stopSong(); break;
     case AudioCmd::Volume: audio.setVolume(msg.value); break;
+    case AudioCmd::Tone: audio.setTone((int8_t)msg.arg[0], (int8_t)msg.arg[1], (int8_t)msg.arg[2]); break;
   }
 }
 
@@ -374,6 +456,7 @@ void audio_process_i2s(int32_t* buff, int16_t validSamples, bool* continueI2S) {
   static double sum = 0;
   static float peak = 0;
   static int count = 0;
+  mics::feedOutput(buff, validSamples);
   if (!levelsWanted()) return;
   for (int i = 0; i < validSamples; i++) {
     float s = buff[i] / 2147483648.0f;
@@ -399,11 +482,12 @@ void audioTask(void*) {
     if (n) {
       audioBusy = true;
       // Przy szybkim przełączaniu stacji liczy się tylko ostatnie graj/stop z paczki.
+      auto playback = [](AudioCmd c) { return c == AudioCmd::PlayUrl || c == AudioCmd::PlayFile || c == AudioCmd::Stop; };
       int lastPlayback = -1;
       for (int i = 0; i < n; i++)
-        if (batch[i].cmd != AudioCmd::Volume) lastPlayback = i;
+        if (playback(batch[i].cmd)) lastPlayback = i;
       for (int i = 0; i < n; i++)
-        if (batch[i].cmd == AudioCmd::Volume || i == lastPlayback) runAudioCommand(batch[i]);
+        if (!playback(batch[i].cmd) || i == lastPlayback) runAudioCommand(batch[i]);
       audioBusy = false;
     }
     audio.loop();
@@ -443,6 +527,7 @@ void startStation(int index, bool announce) {
   streamTrouble = false;
   streamPending = false;
   setTitle("");
+  setStreamInfo(playingName, stations[index].name.c_str());
   announcing = announce && announceEnabled && numbersReady && index < STATION_NUMBER_COUNT;
   if (announcing) {
     snprintf(announceFile, sizeof(announceFile), "%d%s", index + 1, STATION_NUMBER_EXT);
@@ -456,6 +541,7 @@ void startStation(int index, bool announce) {
 }
 
 void play(int index) {
+  alarmDismiss();
   for (String* f : {&icyName, &icyDescription, &icyGenre, &icyUrl, &streamHost}) setStreamInfo(*f, "");
   streamLosses = 0;
   playStartMs = 0;
@@ -463,6 +549,8 @@ void play(int index) {
 }
 
 void stop() {
+  alarmDismiss();
+  sleepEndMs = 0;
   playing = false;
   loading = announcing = streamPending = false;
   setTitle("");
@@ -471,6 +559,7 @@ void stop() {
 }
 
 void setVolume(int v) {
+  alarmDismiss();
   volume = constrain(v, 0, 21);
   sendAudio(AudioCmd::Volume, "", volume);
   saveState();
@@ -496,6 +585,7 @@ void audioInfo(Audio::msg_t m) {
   bool decoding = m.e == Audio::evt_bitrate ||
                   (m.e == Audio::evt_info && m.msg && strncmp(m.msg, "SampleRate", 10) == 0);
   if (decoding && !announcing) {
+    if (loading) mics::suppress(CLAP_SUPPRESS_MS);  // początek dźwięku po ładowaniu
     loading = false;
     if (!playStartMs) playStartMs = millis();
   }
@@ -506,7 +596,10 @@ void audioInfo(Audio::msg_t m) {
     streamTrouble = true;
     streamLosses++;
   }
-  if (m.e == Audio::evt_streamtitle && m.msg) setTitle(m.msg);
+  if (m.e == Audio::evt_streamtitle && m.msg) {
+    setTitle(m.msg);
+    if (!announcing) addHistory(m.msg);
+  }
   if (m.msg && !announcing) {
     if (m.e == Audio::evt_name) setStreamInfo(icyName, m.msg);
     if (m.e == Audio::evt_icydescription) setStreamInfo(icyDescription, m.msg);
@@ -554,6 +647,250 @@ void keepStreamAlive() {
   }
 }
 
+// ---------- barwa dźwięku ----------
+
+void applyTone() {
+  AudioMsg msg{AudioCmd::Tone, 0, ""};
+  for (int i = 0; i < 3; i++) msg.arg[i] = tone3[i];  // sendAudio kopiuje napis, a 0 dB to bajt 0
+  if (xQueueSend(audioQueue, &msg, pdMS_TO_TICKS(100)) != pdTRUE) Serial.println("Kolejka audio pełna");
+}
+
+// ---------- budzik ----------
+// Świt zaczyna się sunriseMin minut przed budzikiem. O czasie radio włącza stację z głośnością
+// rosnącą od 1 do ustawionej przez rampMin minut. Gdy po 30 s nie gra (brak internetu, martwa
+// stacja), zamiast niej pika sygnał z pliku. Każde dotknięcie radia (przycisk, strona,
+// klaśnięcie) kończy narastanie i świt; nietknięty budzik gra najwyżej godzinę.
+
+void saveAlarm() {
+  prefs.putBool("alOn", alarmCfg.on);
+  prefs.putUChar("alH", alarmCfg.hour);
+  prefs.putUChar("alM", alarmCfg.minute);
+  prefs.putUChar("alDays", alarmCfg.days);
+  prefs.putInt("alSt", alarmCfg.station);
+  prefs.putUChar("alVol", alarmCfg.volume);
+  prefs.putUChar("alRamp", alarmCfg.rampMin);
+  prefs.putUChar("alSun", alarmCfg.sunriseMin);
+}
+
+void loadAlarm() {
+  AlarmConfig d;
+  alarmCfg.on = prefs.getBool("alOn", d.on);
+  alarmCfg.hour = min<uint8_t>(prefs.getUChar("alH", d.hour), 23);
+  alarmCfg.minute = min<uint8_t>(prefs.getUChar("alM", d.minute), 59);
+  alarmCfg.days = prefs.getUChar("alDays", d.days) & 0x7F;
+  alarmCfg.station = prefs.getInt("alSt", d.station);
+  alarmCfg.volume = constrain(prefs.getUChar("alVol", d.volume), 1, 21);
+  alarmCfg.rampMin = min<uint8_t>(prefs.getUChar("alRamp", d.rampMin), 30);
+  alarmCfg.sunriseMin = min<uint8_t>(prefs.getUChar("alSun", d.sunriseMin), 30);
+}
+
+// Użytkownik coś zrobił: budzik przestaje sam podkręcać głośność, sygnał milknie, świt gaśnie.
+void alarmDismiss() {
+  if (alarmRun.beeping) sendAudio(AudioCmd::Stop, "", 0);
+  alarmRun.ramping = alarmRun.active = alarmRun.beeping = false;
+  alarmRun.sunrise = false;
+  alarmRun.sunriseUntilMs = 0;
+  leds::setSunrise(-1);
+}
+
+bool alarmRinging() { return alarmRun.active || alarmRun.beeping; }
+
+// Sekundy do najbliższego budzika albo -1 (wyłączony, czas nieznany).
+long secondsToAlarm() {
+  if (!alarmCfg.on || !timeValid()) return -1;
+  time_t now = time(nullptr);
+  tm today;
+  localtime_r(&now, &today);
+  for (int d = 0; d <= 7; d++) {
+    tm c = today;
+    c.tm_mday += d;
+    c.tm_hour = alarmCfg.hour;
+    c.tm_min = alarmCfg.minute;
+    c.tm_sec = 0;
+    c.tm_isdst = -1;
+    time_t t = mktime(&c);  // poprawia datę i ustawia tm_wday
+    if (t <= now) continue;
+    if (alarmCfg.days && !(alarmCfg.days & (1 << c.tm_wday))) continue;
+    return t - now;
+  }
+  return -1;
+}
+
+void alarmFire() {
+  Serial.printf("Budzik %02u:%02u\n", alarmCfg.hour, alarmCfg.minute);
+  if (!alarmCfg.days) {  // jednorazowy
+    alarmCfg.on = false;
+    saveAlarm();
+  }
+  bool sunrise = alarmCfg.sunriseMin > 0;
+  if (!playing && !stations.empty()) {
+    int st = alarmCfg.station >= 0 && alarmCfg.station < (int)stations.size() ? alarmCfg.station : currentStation;
+    play(st);  // kończy poprzedni budzik, więc stan ustawiamy dopiero potem
+    volume = alarmCfg.rampMin ? 1 : alarmCfg.volume;
+    sendAudio(AudioCmd::Volume, "", volume);
+    alarmRun.active = true;
+    alarmRun.ramping = alarmCfg.rampMin > 0;
+    alarmRun.startMs = millis();
+    alarmRun.fromVol = volume;
+  }
+  if (sunrise) {
+    alarmRun.sunrise = true;
+    alarmRun.sunriseUntilMs = millis() + SUNRISE_HOLD_MS;
+  }
+}
+
+void startBeeping() {
+  Serial.println("Budzik: stacja nie gra, włączam sygnał");
+  playing = false;  // bez ponownego łączenia ze stacją
+  loading = announcing = streamPending = false;
+  alarmRun.beeping = true;
+  alarmRun.beepMs = 0;
+  if (volume < alarmCfg.volume) {
+    volume = alarmCfg.volume;
+    sendAudio(AudioCmd::Volume, "", volume);
+  }
+  alarmRun.ramping = false;
+}
+
+// Co sekundę: czy pora budzić, świt, narastanie głośności, sygnał zastępczy.
+void tickAlarm() {
+  static uint32_t lastTick = 0;
+  static bool inSunriseWindow = false;
+  uint32_t now = millis();
+
+  if (alarmRun.beeping && (alarmRun.beepMs == 0 || now - alarmRun.beepMs >= BEEP_REPEAT_MS)) {
+    alarmRun.beepMs = now;
+    sendAudio(AudioCmd::PlayFile, BEEP_FILE, 0);
+  }
+  if (now - lastTick < 1000) return;
+  lastTick = now;
+
+  if (alarmRun.active || alarmRun.beeping) {
+    uint32_t ran = now - alarmRun.startMs;
+    if (ran > ALARM_MAX_MS || (alarmRun.beeping && ran > ALARM_MAX_MS / 6)) {
+      Serial.println("Budzik: nikt nie wyłączył, koniec");
+      stop();
+      return;
+    }
+    if (alarmRun.active && !alarmRun.beeping && playing && !playStartMs && ran > ALARM_FALLBACK_MS) startBeeping();
+  }
+  if (alarmRun.ramping) {
+    uint32_t dur = alarmCfg.rampMin * 60000UL, ran = now - alarmRun.startMs;
+    uint8_t v = ran >= dur ? alarmCfg.volume : alarmRun.fromVol + (alarmCfg.volume - alarmRun.fromVol) * ran / dur;
+    if (ran >= dur) alarmRun.ramping = false;
+    if (v != volume) {
+      volume = v;
+      sendAudio(AudioCmd::Volume, "", volume);
+      if (!alarmRun.ramping) saveState();
+    }
+  }
+
+  if (timeValid()) {
+    time_t t = time(nullptr);
+    tm lt;
+    localtime_r(&t, &lt);
+    int32_t key = ((lt.tm_year * 366 + lt.tm_yday) * 24 + lt.tm_hour) * 60 + lt.tm_min;
+    bool today = !alarmCfg.days || (alarmCfg.days & (1 << lt.tm_wday));
+    if (alarmCfg.on && today && lt.tm_hour == alarmCfg.hour && lt.tm_min == alarmCfg.minute && key != alarmRun.firedKey) {
+      alarmRun.firedKey = key;
+      alarmFire();
+    }
+    // Świt przed budzikiem: na wejściu w okno włącza się od nowa (nawet gdy poprzedni
+    // ktoś zgasił), a zgaszony w oknie już nie wraca.
+    long left = alarmCfg.sunriseMin && !apMode ? secondsToAlarm() : -1;
+    bool window = left > 0 && left <= alarmCfg.sunriseMin * 60L;
+    if (window && !inSunriseWindow) alarmRun.sunrise = true;
+    inSunriseWindow = window;
+    if (window && alarmRun.sunrise) {
+      leds::setSunrise(1.0f - (float)left / (alarmCfg.sunriseMin * 60.0f));
+      return;
+    }
+  }
+  bool hold = alarmRun.sunrise && alarmRun.sunriseUntilMs && (int32_t)(alarmRun.sunriseUntilMs - now) > 0;
+  if (!hold) alarmRun.sunrise = false;
+  leds::setSunrise(hold ? 1.0f : -1.0f);
+}
+
+// Krótki sygnał budzika (WAV 16 kHz mono): cztery piknięcia i chwila ciszy.
+void prepareBeep() {
+  if (!fsReady) return;
+  if (FFat.exists("/beep1.wav")) FFat.remove("/beep1.wav");  // cichsza wersja
+  if (FFat.exists(BEEP_FILE)) return;
+  const uint32_t rate = 16000, samples = rate;  // 1 s
+  File f = FFat.open(BEEP_FILE, "w");
+  if (!f) return;
+  auto u32 = [&](uint32_t v) { f.write((const uint8_t*)&v, 4); };
+  auto u16 = [&](uint16_t v) { f.write((const uint8_t*)&v, 2); };
+  f.write((const uint8_t*)"RIFF", 4);
+  u32(36 + samples * 2);
+  f.write((const uint8_t*)"WAVEfmt ", 8);
+  u32(16);
+  u16(1);  // PCM
+  u16(1);  // mono
+  u32(rate);
+  u32(rate * 2);
+  u16(2);
+  u16(16);
+  f.write((const uint8_t*)"data", 4);
+  u32(samples * 2);
+  int16_t buf[400];  // 25 ms
+  for (uint32_t i = 0; i < samples; i += 400) {
+    for (int k = 0; k < 400; k++) {
+      uint32_t n = i + k, inBeep = n % (rate / 5);  // co 200 ms
+      bool on = n < rate * 4 / 5 && inBeep < rate / 10;  // 100 ms piknięcia
+      float env = min(1.0f, min(inBeep, rate / 10 - inBeep) / 80.0f);  // 5 ms łagodnie, bez trzasków
+      buf[k] = on ? (int16_t)(28000 * env * sinf(2 * PI * 1000 * n / rate)) : 0;
+    }
+    f.write((const uint8_t*)buf, sizeof(buf));
+  }
+  f.close();
+}
+
+// ---------- wyłącznik czasowy ----------
+
+void setSleep(int minutes) {
+  if (sleepFadeVol != 255) sendAudio(AudioCmd::Volume, "", volume);  // przerwane wyciszanie
+  sleepFadeVol = 255;
+  if (minutes <= 0) {
+    sleepEndMs = 0;
+    Serial.println("Wyłącznik czasowy: wyłączony");
+    return;
+  }
+  if (!playing) play(currentStation);
+  sleepEndMs = (millis() + minutes * 60000UL) | 1;
+  Serial.printf("Wyłącznik czasowy: %d min\n", minutes);
+}
+
+long sleepSecondsLeft() { return sleepEndMs ? max(0L, (long)(int32_t)(sleepEndMs - millis()) / 1000) : 0; }
+
+void tickSleep() {
+  if (!sleepEndMs) return;
+  int32_t left = sleepEndMs - millis();
+  if (left <= 0) {
+    Serial.println("Wyłącznik czasowy: stop");
+    stop();
+    sendAudio(AudioCmd::Volume, "", volume);  // następne granie z normalną głośnością
+    sleepFadeVol = 255;
+    return;
+  }
+  if (left < (int32_t)SLEEP_FADE_MS) {
+    uint8_t v = ((uint32_t)volume * left + SLEEP_FADE_MS - 1) / SLEEP_FADE_MS;
+    if (v != sleepFadeVol) {
+      sleepFadeVol = v;
+      sendAudio(AudioCmd::Volume, "", v);
+    }
+  }
+}
+
+// Key1 + Key3 razem: 30 → 60 → 90 min → wyłączony. Diody pokazują czas (jedna = 15 min).
+void cycleSleep() {
+  long left = sleepSecondsLeft() / 60;
+  int next = !sleepEndMs ? 30 : left < 30 ? 60 : left < 60 ? 90 : 0;
+  setSleep(next);
+  if (next) leds::showIndicator(next / 15, 0x8040FF, 2500);
+  else leds::showIndicator(1, 0xFF0000, 1000);
+}
+
 // ---------- JSON ----------
 
 String jsonEscape(const String& s) {
@@ -596,6 +933,24 @@ String ledJson() {
          ",\"auto\":" + leds::autoSeconds() + ",\"now\":\"" + leds::modeId(leds::currentEffect()) + "\"}";
 }
 
+String alarmJson() {
+  return String(",\"alarm\":{\"on\":") + (alarmCfg.on ? "true" : "false") + ",\"h\":" + alarmCfg.hour +
+         ",\"m\":" + alarmCfg.minute + ",\"days\":" + alarmCfg.days + ",\"station\":" + alarmCfg.station +
+         ",\"vol\":" + alarmCfg.volume + ",\"ramp\":" + alarmCfg.rampMin + ",\"sunrise\":" + alarmCfg.sunriseMin +
+         ",\"next\":" + secondsToAlarm() + ",\"ringing\":" + (alarmRinging() ? "true" : "false") +
+         ",\"beeping\":" + (alarmRun.beeping ? "true" : "false") + "}";
+}
+
+String clockJson() {
+  if (!timeValid()) return ",\"clock\":\"\"";
+  time_t t = time(nullptr);
+  tm lt;
+  localtime_r(&t, &lt);
+  char buf[48];
+  snprintf(buf, sizeof(buf), ",\"clock\":\"%02d:%02d\",\"wday\":%d", lt.tm_hour, lt.tm_min, lt.tm_wday);
+  return buf;
+}
+
 void handleStatus() {
   String json = "{\"playing\":" + String(playing ? "true" : "false") +
                 ",\"station\":" + currentStation +
@@ -608,7 +963,12 @@ void handleStatus() {
                 ",\"battery\":" + battery +
                 ",\"loading\":" + (loading ? "true" : "false") +
                 ",\"trouble\":" + (streamTroubleNow() ? "true" : "false") +
-                ",\"announce\":" + (announceEnabled ? "true" : "false") + ledJson() + "}";
+                ",\"announce\":" + (announceEnabled ? "true" : "false") + ledJson() + alarmJson() + clockJson() +
+                ",\"sleep\":" + sleepSecondsLeft() + ",\"tone\":[" + (int)tone3[0] + "," + (int)tone3[1] + "," + (int)tone3[2] + "]" +
+                ",\"clap\":{\"on\":" + (clapEnabled ? "true" : "false") + ",\"sens\":" + clapSensitivity +
+                ",\"count\":" + mics::clapCount() + ",\"db\":" + String(mics::lastClapDb(), 0) +
+                ",\"need\":" + String(mics::clapNeedDb(), 0) + "}" +
+                ",\"hist\":" + historySeq + "}";
   server.send(200, "application/json", json);
 }
 
@@ -636,7 +996,7 @@ void handleStations() {
   for (size_t i = 0; i < stations.size(); i++) {
     if (i) json += ',';
     json += "{\"name\":\"" + jsonEscape(stations[i].name) + "\",\"url\":\"" +
-            jsonEscape(stations[i].url) + "\"}";
+            jsonEscape(stations[i].url) + "\",\"fav\":" + (stations[i].fav ? "true" : "false") + "}";
   }
   json += ']';
   server.send(200, "application/json", json);
@@ -670,6 +1030,9 @@ void handleDeleteStation() {
   stations.erase(stations.begin() + i);
   if (i < currentStation || currentStation >= (int)stations.size()) currentStation = max(0, currentStation - 1);
   if (wasCurrent && playing) stop();
+  if (alarmCfg.station == i) alarmCfg.station = -1;
+  else if (alarmCfg.station > i) alarmCfg.station--;
+  saveAlarm();
   saveStations();
   saveState();
   sendOk();
@@ -680,8 +1043,71 @@ void handleResetStations() {
   if (playing) stop();
   setDefaultStations();
   currentStation = 0;
+  alarmCfg.station = -1;
+  saveAlarm();
   saveState();
   sendOk();
+}
+
+void handleFavourite() {
+  int i = server.arg("i").toInt();
+  if (i < 0 || i >= (int)stations.size()) return sendError("zly numer stacji");
+  stations[i].fav = server.arg("on") == "1";
+  saveStations();
+  sendOk();
+}
+
+void handleTone() {
+  static const char* KEYS[] = {"toneB", "toneM", "toneT"};
+  static const char* ARGS[] = {"b", "m", "t"};
+  for (int i = 0; i < 3; i++) {
+    if (!server.hasArg(ARGS[i])) continue;
+    tone3[i] = constrain(server.arg(ARGS[i]).toInt(), -12, 12);
+    prefs.putChar(KEYS[i], tone3[i]);
+  }
+  applyTone();
+  sendOk();
+}
+
+void handleAlarm() {
+  if (server.hasArg("on")) alarmCfg.on = server.arg("on") == "1";
+  if (server.hasArg("h")) alarmCfg.hour = constrain(server.arg("h").toInt(), 0, 23);
+  if (server.hasArg("m")) alarmCfg.minute = constrain(server.arg("m").toInt(), 0, 59);
+  if (server.hasArg("days")) alarmCfg.days = server.arg("days").toInt() & 0x7F;
+  if (server.hasArg("station")) alarmCfg.station = constrain(server.arg("station").toInt(), -1, (int)stations.size() - 1);
+  if (server.hasArg("vol")) alarmCfg.volume = constrain(server.arg("vol").toInt(), 1, 21);
+  if (server.hasArg("ramp")) alarmCfg.rampMin = constrain(server.arg("ramp").toInt(), 0, 30);
+  if (server.hasArg("sunrise")) alarmCfg.sunriseMin = constrain(server.arg("sunrise").toInt(), 0, 30);
+  saveAlarm();
+  Serial.printf("Budzik: %s %02u:%02u dni %02x\n", alarmCfg.on ? "wł." : "wył.", alarmCfg.hour, alarmCfg.minute, alarmCfg.days);
+  sendOk();
+}
+
+void handleClap() {
+  if (server.hasArg("on")) clapEnabled = server.arg("on") == "1";
+  if (server.hasArg("sens")) clapSensitivity = constrain(server.arg("sens").toInt(), 1, 3);
+  prefs.putBool("clap", clapEnabled);
+  prefs.putUChar("clapSens", clapSensitivity);
+  mics::setClapDetection(clapEnabled, clapSensitivity);
+  sendOk();
+}
+
+void handleHistory() {
+  String json = "[";
+  xSemaphoreTake(titleLock, portMAX_DELAY);
+  for (int i = history.size() - 1; i >= 0; i--) {
+    char at[8] = "";
+    if (history[i].at) {
+      tm lt;
+      localtime_r(&history[i].at, &lt);
+      snprintf(at, sizeof(at), "%02d:%02d", lt.tm_hour, lt.tm_min);
+    }
+    if (json.length() > 1) json += ',';
+    json += String("{\"at\":\"") + at + "\",\"station\":\"" + jsonEscape(history[i].station) + "\",\"title\":\"" +
+            jsonEscape(history[i].title) + "\"}";
+  }
+  xSemaphoreGive(titleLock);
+  server.send(200, "application/json", json + "]");
 }
 
 // Skanowanie w tle: blokujące wstrzymałoby stronę, przyciski i diody na ok. 3 s. Strona pyta
@@ -874,6 +1300,13 @@ void setupRoutes() {
     server.on("/api/stations/delete", HTTP_POST, handleDeleteStation);
     server.on("/api/stations/reset", HTTP_POST, handleResetStations);
     server.on("/api/led", HTTP_POST, handleLed);
+    server.on("/api/stations/fav", HTTP_POST, handleFavourite);
+    server.on("/api/tone", HTTP_POST, handleTone);
+    server.on("/api/alarm", HTTP_POST, handleAlarm);
+    server.on("/api/alarm/test", HTTP_POST, [] { sendOk(); alarmFire(); });
+    server.on("/api/sleep", HTTP_POST, [] { setSleep(server.arg("min").toInt()); sendOk(); });
+    server.on("/api/clap", HTTP_POST, handleClap);
+    server.on("/api/history", HTTP_GET, handleHistory);
     server.on("/api/announce", HTTP_POST, [] {
       announceEnabled = server.arg("on") == "1";
       prefs.putBool("announce", announceEnabled);
@@ -1024,18 +1457,28 @@ void checkSetupIdle() {
 
 // ---------- przyciski ----------
 
-enum class ButtonEvent { None, Click, LongPress, Repeat };
+enum class ButtonEvent { None, Click, DoubleClick, LongPress, Repeat };
 
 // Rozpoznaje krótkie kliknięcie (po puszczeniu), przytrzymanie i opcjonalne powtarzanie.
+// Z doubleMs > 0 także podwójne kliknięcie; pojedyncze przychodzi wtedy z opóźnieniem doubleMs.
 struct Button {
   uint32_t longPressMs;
   uint32_t repeatMs;  // 0 = bez powtarzania
+  uint32_t doubleMs;  // 0 = bez podwójnego kliknięcia
   bool wasPressed = false;
-  bool longFired = false;
+  bool longFired = false;  // także: naciśnięcie zużyte (np. w kombinacji przycisków)
+  bool clickPending = false;
   uint32_t pressedAt = 0;
   uint32_t lastRepeatAt = 0;
+  uint32_t clickAt = 0;
 
-  Button(uint32_t longMs, uint32_t repMs = 0) : longPressMs(longMs), repeatMs(repMs) {}
+  Button(uint32_t longMs, uint32_t repMs = 0, uint32_t dblMs = 0) : longPressMs(longMs), repeatMs(repMs), doubleMs(dblMs) {}
+
+  // Naciśnięcie obsłużone inaczej: puszczenie nie da kliknięcia ani przytrzymania.
+  void consume() {
+    longFired = true;
+    clickPending = false;
+  }
 
   ButtonEvent update(bool pressed, uint32_t now) {
     ButtonEvent ev = ButtonEvent::None;
@@ -1044,12 +1487,24 @@ struct Button {
       longFired = false;
     } else if (pressed && !longFired && now - pressedAt >= longPressMs) {
       longFired = true;
+      clickPending = false;
       lastRepeatAt = now;
       ev = ButtonEvent::LongPress;
     } else if (pressed && longFired && repeatMs && now - lastRepeatAt >= repeatMs) {
       lastRepeatAt = now;
       ev = ButtonEvent::Repeat;
     } else if (!pressed && wasPressed && !longFired && now - pressedAt > 30) {
+      if (!doubleMs) {
+        ev = ButtonEvent::Click;
+      } else if (clickPending && now - clickAt <= doubleMs) {
+        clickPending = false;
+        ev = ButtonEvent::DoubleClick;
+      } else {
+        clickPending = true;
+        clickAt = now;
+      }
+    } else if (!pressed && !wasPressed && clickPending && now - clickAt > doubleMs) {
+      clickPending = false;
       ev = ButtonEvent::Click;
     }
     wasPressed = pressed;
@@ -1060,10 +1515,22 @@ struct Button {
 Button bootButton(WIFI_SETUP_PRESS_MS);
 // Układ jak w słuchawkach Bluetooth: zewnętrzne krótko = głośność, długo = stacja.
 Button key1(800);
-Button key2(1000);
+Button key2(1000, 0, DOUBLE_CLICK_MS);
 Button key3(800);
 
-void togglePlay() { playing ? stop() : play(currentStation); }
+// Sygnał budzika też jest „graniem”: graj/stop go wycisza, zamiast włączać stację.
+void togglePlay() { playing || alarmRun.beeping ? stop() : play(currentStation); }
+
+// Następna ulubiona stacja po bieżącej (w kółko).
+void nextFavourite() {
+  int n = stations.size();
+  for (int k = 1; k <= n; k++) {
+    int i = (currentStation + k) % n;
+    if (stations[i].fav) return play(i);
+  }
+  Serial.println("Brak ulubionych stacji");
+  leds::showIndicator(1, 0xFF0000, 800);
+}
 
 // Kolejność trybów jak na stronie (zakładka Światło), a nie jak w enum Mode, do którego nowe
 // tryby dopisuje się na końcu.
@@ -1115,6 +1582,8 @@ void handleButtons() {
     ESP.restart();
   }
   if (apMode) return;
+  // Sygnał budzika wycisza dowolny przycisk; to naciśnięcie nie robi nic więcej.
+  if (boot == ButtonEvent::Click && alarmRun.beeping) return stop();
   if (boot == ButtonEvent::Click) nextLedMode();
 
   static uint32_t lastPoll = 0;
@@ -1122,17 +1591,30 @@ void handleButtons() {
   lastPoll = now;
   uint8_t keys = board::readKeys();
 
-  switch (key1.update(keys & board::KEY1, now)) {
+  ButtonEvent e1 = key1.update(keys & board::KEY1, now);
+  ButtonEvent e2 = key2.update(keys & board::KEY2, now);
+  ButtonEvent e3 = key3.update(keys & board::KEY3, now);
+  // Key1 i Key3 razem = wyłącznik czasowy; puszczenie nie zmienia już głośności ani stacji.
+  if ((keys & board::KEY1) && (keys & board::KEY3) && !(key1.longFired && key3.longFired)) {
+    key1.consume();
+    key3.consume();
+    e1 = e3 = ButtonEvent::None;
+    cycleSleep();
+  }
+  if (alarmRun.beeping && (e1 != ButtonEvent::None || e2 != ButtonEvent::None || e3 != ButtonEvent::None)) return stop();
+
+  switch (e1) {
     case ButtonEvent::Click: changeVolume(-1); break;
     case ButtonEvent::LongPress: switchStation(-1); break;
     default: break;
   }
-  switch (key2.update(keys & board::KEY2, now)) {
+  switch (e2) {
     case ButtonEvent::Click: togglePlay(); break;
+    case ButtonEvent::DoubleClick: nextFavourite(); break;
     case ButtonEvent::LongPress: setLedsDarkWhilePlaying(!leds::darkWhilePlaying()); break;
     default: break;
   }
-  switch (key3.update(keys & board::KEY3, now)) {
+  switch (e3) {
     case ButtonEvent::Click: changeVolume(+1); break;
     case ButtonEvent::LongPress: switchStation(+1); break;
     default: break;
@@ -1185,6 +1667,12 @@ void setup() {
   bool setupOnce = prefs.getBool("setupOnce", false);  // przytrzymany BOOT przed restartem
   if (setupOnce) prefs.remove("setupOnce");
   announceEnabled = prefs.getBool("announce", true);
+  tone3[0] = constrain(prefs.getChar("toneB", 0), -12, 12);
+  tone3[1] = constrain(prefs.getChar("toneM", 0), -12, 12);
+  tone3[2] = constrain(prefs.getChar("toneT", 0), -12, 12);
+  loadAlarm();
+  clapEnabled = prefs.getBool("clap", false);
+  clapSensitivity = constrain(prefs.getUChar("clapSens", 2), 1, 3);
 
   leds::begin(board::LED_PIN, board::LED_COUNT);  // od razu animacja startowa
   leds::setColor(prefs.getUInt("ledColor", 0xFF6A00));
@@ -1199,9 +1687,11 @@ void setup() {
   audio.setPinout(board::I2S_BCLK, board::I2S_LRCK, board::I2S_DOUT, board::I2S_MCLK);
   audio.setOutputSampleRate(Audio::SR_48000);  // kodek skonfigurowany na stałe 48 kHz
   audio.setVolume(volume);
+  audio.setTone(tone3[0], tone3[1], tone3[2]);
   if (!board::begin()) Serial.println("Błąd inicjalizacji kodeka ES8311 – nie będzie dźwięku");
   if (!mics::begin()) Serial.println("Błąd inicjalizacji mikrofonów (ES7210 / I2S1)");
   prepareNumberClips();
+  prepareBeep();
 
   audioQueue = xQueueCreate(8, sizeof(AudioMsg));
   // Rdzeń 1 i ten sam priorytet co loop(): FreeRTOS dzieli między nie czas, więc liczenie SSL
@@ -1211,6 +1701,8 @@ void setup() {
 
   if (!setupOnce && connectWifi()) {
     Serial.printf("Połączono, IP: %s\n", WiFi.localIP().toString().c_str());
+    configTzTime(TIME_ZONE, "pool.ntp.org", "time.google.com");
+    mics::setClapDetection(clapEnabled, clapSensitivity);
     if (MDNS.begin(HOSTNAME)) {
       MDNS.addService("http", "tcp", 80);
       Serial.printf("Strona: http://%s.local\n", HOSTNAME);
@@ -1231,7 +1723,13 @@ void loop() {
   checkSetupIdle();
   if (restartAtMs && (int32_t)(millis() - restartAtMs) >= 0) ESP.restart();
   handleButtons();
+  if (!apMode && mics::takeDoubleClap()) {
+    Serial.println("Podwójne klaśnięcie");
+    togglePlay();
+  }
   keepStreamAlive();
+  tickAlarm();
+  tickSleep();
   updateLeds();
   vTaskDelay(1);
 }

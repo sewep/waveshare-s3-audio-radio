@@ -30,6 +30,12 @@ volatile uint8_t vuInput = 0;
 volatile int batteryPercent = -1;
 volatile bool darkPlaying = false;
 bool lowBattery = false;
+volatile float sunrise = -1;  // świt budzika 0..1, -1 = wyłączony
+
+// Wskaźnik: przez chwilę świeci tyle diod, ile podano (np. czas wyłącznika), ponad wszystkim.
+volatile uint8_t indicatorCount = 0;
+volatile uint32_t indicatorColor = 0;
+volatile uint32_t indicatorUntilMs = 0;
 
 // Ruchome „dno” i „sufit” sygnału: wynik 0..1 rozciągnięty na to, co akurat gra, więc efekty
 // reagują tak samo przy cichej i przy mocno skompresowanej muzyce.
@@ -381,10 +387,32 @@ void renderMode(uint32_t t) {
   renderEffect(curMode, t);
 }
 
+// Świt: od ciemnej czerwieni przez pomarańcz do ciepłej bieli, coraz jaśniej. Jasność nie zależy
+// od ustawienia diod, bo świt ma obudzić.
+void renderSunrise(float p) {
+  static const float STOPS[][4] = {{0.0f, 80, 0, 0}, {0.35f, 255, 40, 0}, {0.7f, 255, 120, 20}, {1.0f, 255, 190, 110}};
+  int k = 0;
+  while (k < 2 && p > STOPS[k + 1][0]) k++;
+  float f = constrain((p - STOPS[k][0]) / (STOPS[k + 1][0] - STOPS[k][0]), 0.0f, 1.0f);
+  float k2 = 0.02f + 0.98f * p * p;
+  uint8_t c[3];
+  for (int i = 0; i < 3; i++) c[i] = (STOPS[k][i + 1] + (STOPS[k + 1][i + 1] - STOPS[k][i + 1]) * f) * k2;
+  fill(Adafruit_NeoPixel::Color(c[0], c[1], c[2]));
+}
+
 void render(uint32_t t) {
   updateMusic(t);
   updateSpectrum();
   if (renderBoot(t)) return;
+  if (indicatorUntilMs && (int32_t)(indicatorUntilMs - t) > 0) {
+    // Stała jasność: przy przygaszonych diodach wskaźnik też ma być widać.
+    uint32_t c = indicatorColor;
+    uint32_t on = Adafruit_NeoPixel::Color(((c >> 16) & 0xFF) * 2 / 5, ((c >> 8) & 0xFF) * 2 / 5, (c & 0xFF) * 2 / 5);
+    for (int i = 0; i < ledCount; i++) strip->setPixelColor(i, i < indicatorCount ? on : 0);
+    return;
+  }
+  float sun = sunrise;
+  if (sun >= 0) return renderSunrise(sun);
   if (curMode == Mode::Off) return fill(0);
 
   int bat = batteryPercent;
@@ -457,5 +485,13 @@ void setSpectrum(const std::vector<uint32_t>& bands) {
   for (int b = 0; b < SPECTRUM_BANDS && b < (int)bands.size(); b++) spectrum[b] = min<uint32_t>(bands[b], 255);
 }
 void setBatteryPercent(int percent) { batteryPercent = percent; }
+void setSunrise(float progress) { sunrise = progress < 0 ? -1 : min(progress, 1.0f); }
+
+void showIndicator(uint8_t count, uint32_t rgb, uint32_t ms) {
+  indicatorUntilMs = 0;
+  indicatorCount = count;
+  indicatorColor = rgb;
+  indicatorUntilMs = millis() + ms;
+}
 
 }  // namespace leds

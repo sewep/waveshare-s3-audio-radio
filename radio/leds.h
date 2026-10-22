@@ -67,4 +67,11 @@ void setVuLevel(uint8_t level);       // 0..255, z biblioteki audio
 void setSpectrum(const std::vector<uint32_t>& bands);  // 15 pasm 0..255, z biblioteki audio
 void setBatteryPercent(int percent);  // -1 = nieznany
 
+// Świt przed budzikiem: 0..1 rozjaśnia pierścień od czerwieni do ciepłej bieli; -1 = wyłączony.
+// Ma pierwszeństwo przed trybem i stanem (poza animacją startową i wskaźnikiem).
+void setSunrise(float progress);
+
+// Przez ms świeci count pierwszych diod w kolorze rgb (np. czas wyłącznika), ponad wszystkim.
+void showIndicator(uint8_t count, uint32_t rgb, uint32_t ms);
+
 }  // namespace leds

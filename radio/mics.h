@@ -16,6 +16,22 @@ bool begin();
 void keepAwake();
 bool awake();
 
+// Wykrywanie podwójnego klaśnięcia; gdy włączone, mikrofony słuchają cały czas.
+// sensitivity: 1 = niska, 2 = średnia, 3 = wysoka.
+void setClapDetection(bool on, uint8_t sensitivity);
+// Próbki wysyłane na głośnik (po regulacji głośności), żeby muzyki nie brać za klaśnięcia.
+// Wołaj z audio_process_i2s.
+void feedOutput(const int32_t* buff, int samples);
+// Przez ms nic nie jest klaśnięciem (trzask głośnika przy starcie i zatrzymaniu odtwarzania).
+void suppress(uint32_t ms);
+// Szczyt w dBFS, którego klaśnięcie teraz potrzebuje; powyżej 0 = muzyka je zagłusza.
+float clapNeedDb();
+// true raz po każdym podwójnym klaśnięciu.
+bool takeDoubleClap();
+// Do testu na stronie: liczba pojedynczych klaśnięć od startu i szczyt ostatniego (dBFS).
+uint32_t clapCount();
+float lastClapDb();
+
 // Średni (RMS) i szczytowy poziom z ostatnich 100 ms w dBFS; SILENCE_DB = brak danych.
 float rmsDb(int mic);
 float peakDb(int mic);

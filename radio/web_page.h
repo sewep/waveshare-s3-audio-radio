@@ -5,8 +5,8 @@
 static const char FAVICON_SVG[] PROGMEM = R"SVG(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#2563eb"/><path d="M22 23 44 11" stroke="#fff" stroke-width="4" stroke-linecap="round"/><rect x="10" y="23" width="44" height="31" rx="7" fill="#fff"/><circle cx="24" cy="38.5" r="8" fill="#2563eb"/><circle cx="24" cy="38.5" r="3" fill="#fff"/><rect x="37" y="31" width="11" height="4" rx="2" fill="#2563eb"/><rect x="37" y="37" width="11" height="4" rx="2" fill="#2563eb"/><rect x="37" y="43" width="11" height="4" rx="2" fill="#2563eb"/></svg>)SVG";
 
 // Strona radia, ta sama w trybie normalnym i w trybie konfiguracji (hotspot). Zakładki: Radio,
-// Stacje, Światło, Wi-Fi, Stan, Pomoc; aktywna zakładka jest w adresie (#radio, #stacje, #swiatlo,
-// #wifi, #stan, #pomoc). Zakładka Stan pyta o poziomy dźwięku co 150 ms i o resztę co 2 s, tylko
+// Stacje, Budzik, Światło, Wi-Fi, Stan, Pomoc; aktywna zakładka jest w adresie (#radio, #stacje,
+// #budzik, #swiatlo, #wifi, #stan, #pomoc). Zakładka Stan pyta o poziomy dźwięku co 150 ms i o resztę co 2 s, tylko
 // gdy jest otwarta. Sekcje mają data-tab, a nie id, żeby przeglądarka nie przewijała do nich pod
 // przyklejony pasek zakładek. W trybie konfiguracji (/api/wifi zwraca "ap":true) widać tylko Wi-Fi.
 //
@@ -25,8 +25,8 @@ static const char INDEX_HTML[] PROGMEM = R"HTML(<!doctype html>
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.45 system-ui,sans-serif}
 main{max-width:560px;margin:0 auto;padding:16px 16px 32px}
-nav{position:sticky;top:0;z-index:1;background:var(--bg);display:flex;gap:4px;max-width:560px;margin:0 auto;padding:8px 16px;border-bottom:1px solid var(--line)}
-nav a{flex:1;text-align:center;padding:8px 2px;border-radius:8px;color:var(--muted);text-decoration:none;font-size:14px;font-weight:600}
+nav{position:sticky;top:0;z-index:1;background:var(--bg);display:flex;gap:2px;max-width:560px;margin:0 auto;padding:8px 16px;border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none}
+nav a{flex:1 0 auto;text-align:center;padding:8px 6px;border-radius:8px;color:var(--muted);text-decoration:none;font-size:14px;font-weight:600}
 nav a.on{background:var(--card);color:var(--accent);box-shadow:0 0 0 1px var(--line)}
 section{display:none}section.on{display:block}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
@@ -80,6 +80,22 @@ fieldset{border:none;margin:0;padding:0;display:grid;gap:4px}
 .bar.buf i{background:var(--accent);opacity:.75}
 .scale{display:grid;grid-template-columns:6.2em 1fr 5.4em;gap:8px;font-size:11px;color:var(--muted)}
 .scale div{display:flex;justify-content:space-between}
+li .star{border:none;background:none;padding:8px;font-size:18px;line-height:1;color:var(--muted)}
+li .star.on{color:#f59e0b}
+.tone{display:grid;grid-template-columns:5.5em 1fr 4em;gap:8px;align-items:center;margin:6px 0}
+.tone span:last-child{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums;font-size:14px}
+.hist li{display:block;padding:6px 0}
+.hist .t{display:flex;gap:8px;align-items:baseline}
+.hist .t b{flex:1;font-weight:500;overflow-wrap:anywhere}
+.hist .t a{font-size:13px;color:var(--accent);white-space:nowrap}
+.hist small{color:var(--muted);font-size:13px}
+.clock{font-size:34px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.1}
+.days{display:flex;gap:4px;flex-wrap:wrap;margin:8px 0}
+.days button{min-width:42px;padding:6px 4px}
+.days button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.field{display:grid;grid-template-columns:9em 1fr;gap:8px;align-items:center;margin:8px 0;font-size:15px}
+.field select,input[type=time]{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);min-width:0}
+input[type=time]{font-size:22px;font-weight:600}
 #apInfo{display:none}
 body.ap #apInfo{display:block}
 body.ap nav,body.ap .sta{display:none}
@@ -209,7 +225,7 @@ body.ap nav,body.ap .sta{display:none}
 </svg>
 </header>
 <nav>
-  <a href="#radio">Radio</a><a href="#stacje">Stacje</a><a href="#swiatlo">Światło</a><a href="#wifi">Wi-Fi</a><a href="#stan">Stan</a><a href="#pomoc">Pomoc</a>
+  <a href="#radio">Radio</a><a href="#stacje">Stacje</a><a href="#budzik">Budzik</a><a href="#swiatlo">Światło</a><a href="#wifi">Wi-Fi</a><a href="#stan">Stan</a><a href="#pomoc">Pomoc</a>
 </nav>
 <main>
 
@@ -228,6 +244,32 @@ body.ap nav,body.ap .sta{display:none}
       <input type="range" id="vol" min="0" max="21">
       <span id="volv" class="muted" style="width:2ch"></span>
     </div>
+    <div id="favBox">
+      <div class="muted" style="margin-top:12px">Ulubione</div>
+      <div class="chips" id="favs"></div>
+    </div>
+    <div class="muted" style="margin-top:12px">Wyłącz za <span id="sleepLeft"></span></div>
+    <div class="chips" id="sleepChips"></div>
+  </div>
+  <div class="card">
+    <h2>Ostatnio grane</h2>
+    <ul class="hist" id="hist"></ul>
+    <button class="small" id="histMore" hidden>Pokaż wszystkie</button>
+  </div>
+  <div class="card">
+    <h2>Barwa dźwięku</h2>
+    <div class="tone"><span>Bas</span><input type="range" id="toneB" min="-12" max="12"><span id="toneBv"></span></div>
+    <div class="tone"><span>Środek</span><input type="range" id="toneM" min="-12" max="12"><span id="toneMv"></span></div>
+    <div class="tone"><span>Wysokie</span><input type="range" id="toneT" min="-12" max="12"><span id="toneTv"></span></div>
+    <div class="chips" id="tonePresets"></div>
+    <p class="muted">Bas poniżej ok. 500 Hz, środek wokół 1,8 kHz, wysokie powyżej 6 kHz. Podbicie jednego pasma ścisza pozostałe o tyle samo, żeby dźwięk się nie przesterował, więc po podbiciu może być potrzebna większa głośność.</p>
+  </div>
+  <div class="card">
+    <h2>Klaśnięcie</h2>
+    <label class="row"><input type="checkbox" id="clapOn"> Dwa klaśnięcia włączają i zatrzymują radio</label>
+    <div class="row" style="margin-top:8px"><span class="muted">Czułość</span><div class="chips" id="clapSens" style="margin:0"></div></div>
+    <p class="muted">Klaśnij dwa razy, w odstępie od 0,15 do 0,8 s. Muzyka z głośnika podnosi próg, więc przy głośnym graniu klaszcz bliżej radia albo głośniej.</p>
+    <p class="muted" id="clapTest"></p>
   </div>
   <div class="card">
     <h2>Stacje</h2>
@@ -259,6 +301,38 @@ body.ap nav,body.ap .sta{display:none}
     <h2>Lista domyślna</h2>
     <p class="muted">Przywraca listę stacji wbudowaną w firmware. Stacje dodane ręcznie zostaną usunięte.</p>
     <button id="reset">Przywróć domyślne stacje</button>
+  </div>
+</section>
+
+<section data-tab="budzik">
+  <div class="card">
+    <div class="muted">Czas w radiu</div>
+    <div class="clock" id="clock">--:--</div>
+    <div class="muted" id="clockDay"></div>
+  </div>
+  <div class="card">
+    <h2>Budzik</h2>
+    <label class="row"><input type="checkbox" id="alOn"> Włączony</label>
+    <div class="field"><span>Godzina</span><input type="time" id="alTime" value="07:00"></div>
+    <div class="muted">Dni (żaden = tylko raz)</div>
+    <div class="days" id="alDays"></div>
+    <div class="field"><span>Stacja</span><select id="alStation"></select></div>
+    <div class="field"><span>Głośność</span><div class="row"><input type="range" id="alVol" min="1" max="21"><span id="alVolv" class="muted" style="width:2ch"></span></div></div>
+    <div class="field"><span>Narastanie</span><select id="alRamp"></select></div>
+    <div class="field"><span>Świt na diodach</span><select id="alSun"></select></div>
+    <div class="row" style="margin-top:12px"><button class="primary" id="alSave">Zapisz</button><button id="alTest">Wypróbuj teraz</button><span class="muted" id="alSaved"></span></div>
+    <p id="alNext" style="margin-top:12px"></p>
+  </div>
+  <div class="card">
+    <h2>Jak budzi</h2>
+    <ul class="dots">
+      <li>Przed budzikiem diody powoli się rozjaśniają, od ciemnej czerwieni do ciepłej bieli, niezależnie od trybu i jasności z zakładki Światło.</li>
+      <li>O czasie radio włącza stację, a głośność rośnie od 1 do ustawionej.</li>
+      <li>Gdy stacja nie zagra w 30 s (np. nie ma internetu), radio pika.</li>
+      <li>Każdy przycisk, zmiana na stronie albo klaśnięcie kończy narastanie głośności i świt. Key2 albo dowolny przycisk wycisza pikanie.</li>
+      <li>Nietknięty budzik gra najwyżej godzinę (pikanie 10 minut). Gdy radio już gra, budzik nie zmienia stacji.</li>
+      <li>Czas radio bierze z internetu (strefa polska, z czasem letnim). Po zaniku prądu budzik działa, gdy tylko radio połączy się z Wi-Fi.</li>
+    </ul>
   </div>
 </section>
 
@@ -373,11 +447,13 @@ body.ap nav,body.ap .sta{display:none}
     <table>
       <tr><th>Przycisk</th><th>Krótko</th><th>Przytrzymanie</th></tr>
       <tr><td>Key1</td><td>Ciszej</td><td>Poprzednia stacja</td></tr>
-      <tr><td>Key2</td><td>Graj / stop</td><td>Wygaś / przywróć diody na czas grania</td></tr>
+      <tr><td>Key2</td><td>Graj / stop; dwa razy szybko: następna ulubiona stacja</td><td>Wygaś / przywróć diody na czas grania</td></tr>
       <tr><td>Key3</td><td>Głośniej</td><td>Następna stacja</td></tr>
       <tr><td>BOOT</td><td>Następny tryb diod (jak na liście w zakładce Światło)</td><td>3 s: tryb konfiguracji Wi-Fi (zapisane sieci zostają); w nim 3 s: powrót bez zmian</td></tr>
+      <tr><td>Key1 + Key3</td><td colspan="2">Naciśnięte razem: wyłącznik czasowy 30 → 60 → 90 min → wyłączony. Diody pokażą czas (jedna fioletowa = 15 min); jedna czerwona = wyłączony.</td></tr>
       <tr><td>RESET</td><td colspan="2">Restart radia (ustawienia zostają)</td></tr>
     </table>
+    <p class="muted">Gdy pika budzik, każdy przycisk tylko go wycisza.</p>
     <p class="muted">Układ jak w słuchawkach Bluetooth: środkowy przycisk graj/stop, zewnętrzne krótko zmieniają głośność, a przytrzymane (ok. 1 s) zmieniają stację.</p>
   </div>
   <div class="card">
@@ -386,6 +462,8 @@ body.ap nav,body.ap .sta{display:none}
       <li>Kliknij stację na liście, żeby jej słuchać. Radio pamięta ostatnią stację i głośność, a po włączeniu zasilania samo zaczyna grać.</li>
       <li>Przy starcie i każdej zmianie stacji radio mówi jej numer z listy, więc przełączając przyciskami wiesz, gdzie jesteś. Zapowiedź wyłączysz w zakładce Stacje.</li>
       <li>Strona działa na każdym urządzeniu w tej samej sieci pod adresem <code>http://radio.local</code>. Jeśli adres się nie otwiera, użyj numeru IP z zakładki Stan albo rozłącz VPN.</li>
+      <li>Gwiazdką w zakładce Stacje oznaczysz ulubione. Mają przyciski w zakładce Radio, a na płytce przełącza je podwójne kliknięcie Key2.</li>
+      <li>Wyłącznik czasowy ustawisz w zakładce Radio albo przyciskami Key1 + Key3. W ostatniej minucie muzyka powoli cichnie.</li>
       <li>Gdy strumień się urwie, radio po kilku sekundach samo połączy się ponownie.</li>
       <li>Zmiany zrobione przyciskami pojawiają się na stronie po kilku sekundach.</li>
     </ul>
@@ -406,7 +484,9 @@ body.ap nav,body.ap .sta{display:none}
 </main>
 <script>
 const $=id=>document.getElementById(id);
-let st={},stations=[],apMode=false,wifi={saved:[]},openNets=new Set();
+let st={},stations=[],apMode=false,wifi={saved:[]},openNets=new Set(),histSeq=-1,histAll=false,histList=[],alarmLoaded=false;
+const DAYS=['Nd','Pn','Wt','Śr','Cz','Pt','So'],DAY_ORDER=[1,2,3,4,5,6,0];
+const DAY_NAMES=['niedziela','poniedziałek','wtorek','środa','czwartek','piątek','sobota'];
 const post=(u,d)=>fetch(u,{method:'POST',body:new URLSearchParams(d||{})});
 const MODES=[
   ['off','Wyłączone','Wszystkie diody zgaszone.'],
@@ -477,7 +557,7 @@ function renderHero(){
   $('hero').classList.toggle('playing',!apMode&&!!st.playing&&!st.loading);
   $('hero').classList.toggle('air',apMode||!!st.playing);
   $('hNum').textContent=!apMode&&cur?String(st.station+1).padStart(2,'0'):'--';
-  setHeroName(apMode?'USTAW WI-FI':cur?cur.name:'RADIO');
+  setHeroName(apMode?'USTAW WI-FI':cur?cur.name+(st.playing&&!st.loading&&st.title?' · '+st.title:''):'RADIO');
   $('hState').textContent=apMode?(wifi.hotspot||'HOTSPOT').toUpperCase():!st.playing?'■ STOP':st.trouble?'… SŁABY STRUMIEŃ':st.loading?'ŁĄCZENIE…':`▶ GRA · VOL ${st.volume}`;
   $('needle').setAttribute('x',255+frac*134);
   $('knobSt').setAttribute('transform',`rotate(${-135+270*frac} 266 135)`);
@@ -496,6 +576,7 @@ function showTab(){
   document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.hash==='#'+id));
   window.scrollTo(0,0);
   if(id==='wifi'&&!apMode)wifiInfo();
+  if(id==='budzik')renderAlarm(true);
   if(id==='stan')diag();
 }
 window.onhashchange=showTab;showTab();
@@ -523,18 +604,38 @@ function render(){
 
   const q=$('quick');q.innerHTML='';
   const m=$('manage');m.innerHTML='';
+  const fv=$('favs');fv.innerHTML='';
   stations.forEach((s,i)=>{
     const li=document.createElement('li');if(st.playing&&i===st.station)li.className='on';
-    const n=document.createElement('span');n.className='name';n.textContent=`${i+1}. ${s.name}`;n.onclick=()=>play(i);
+    const n=document.createElement('span');n.className='name';n.textContent=`${i+1}. ${s.name}${s.fav?' ★':''}`;n.onclick=()=>play(i);
     li.append(n);q.append(li);
 
     const li2=document.createElement('li');
+    const star=document.createElement('button');star.className='star'+(s.fav?' on':'');star.textContent=s.fav?'★':'☆';
+    star.title=s.fav?'Usuń z ulubionych':'Dodaj do ulubionych';
+    star.onclick=()=>post('/api/stations/fav',{i,on:s.fav?0:1}).then(load);
     const u=document.createElement('div');u.className='url';u.textContent=`${i+1}. ${s.name}`;
     const sm=document.createElement('small');sm.textContent=s.url;u.append(sm);
     const d=document.createElement('button');d.className='del';d.textContent='✕';d.title='Usuń';
     d.onclick=()=>{if(confirm('Usunąć '+s.name+'?'))post('/api/stations/delete',{i}).then(load).then(status)};
-    li2.append(u,d);m.append(li2);
+    li2.append(star,u,d);m.append(li2);
+
+    if(s.fav){const b=document.createElement('button');b.textContent=s.name;b.classList.toggle('on',!!st.playing&&i===st.station);b.onclick=()=>play(i);fv.append(b)}
   });
+  if(!fv.children.length)fv.innerHTML='<span class="muted">Oznacz stacje gwiazdką w zakładce Stacje.</span>';
+
+  $('sleepLeft').textContent=st.sleep?`(zostało ${Math.ceil(st.sleep/60)} min)`:'';
+  document.querySelectorAll('#sleepChips button').forEach(b=>b.classList.toggle('on',+b.dataset.min===0?!st.sleep:false));
+  if(st.tone)['toneB','toneM','toneT'].forEach((id,k)=>{if(document.activeElement!==$(id)){$(id).value=st.tone[k];$(id+'v').textContent=db(st.tone[k])}});
+  document.querySelectorAll('#tonePresets button').forEach(b=>b.classList.toggle('on',st.tone&&b.dataset.v===st.tone.join(',')));
+  if(st.clap){
+    $('clapOn').checked=st.clap.on;
+    document.querySelectorAll('#clapSens button').forEach(b=>b.classList.toggle('on',+b.dataset.s===st.clap.sens));
+    $('clapTest').textContent=!st.clap.on?'':(st.clap.need>-3?'Przy tej głośności muzyka z głośnika zagłusza klaśnięcia. Ścisz radio albo zatrzymaj je przyciskiem. ':'')+
+      (st.clap.count?`Słyszane klaśnięcia: ${st.clap.count}, ostatnie ${st.clap.db} dBFS.`:'Klaśnij raz, żeby sprawdzić, czy radio słyszy.');
+  }
+  if(st.hist!==undefined&&st.hist!==histSeq){histSeq=st.hist;loadHistory()}
+  renderAlarm(false);
 
   if(st.led){
     const md=MODES.find(x=>x[0]===st.led.mode);
@@ -552,6 +653,66 @@ function render(){
   tableRows('wifiNow',[['Sieć',st.ssid||'—'],['Sygnał',rssi,st.rssi!==undefined?bars(st.rssi):''],['IP',st.ip||'—'],['Adres',st.host?`http://${st.host}`:'—']]);
   renderHero();
 }
+
+const db=v=>(v>0?'+':v<0?'−':'')+Math.abs(v)+' dB';
+
+// ---------- ostatnio grane ----------
+
+async function loadHistory(){try{histList=await (await fetch('/api/history',{cache:'no-store'})).json();renderHistory()}catch(e){}}
+function renderHistory(){
+  const ul=$('hist');ul.innerHTML='';
+  if(!histList.length)ul.innerHTML='<li class="muted">Tytuły pojawią się tu, gdy stacja je poda. Część stacji ich nie wysyła.</li>';
+  (histAll?histList:histList.slice(0,5)).forEach(h=>{
+    const li=document.createElement('li');
+    const t=document.createElement('div');t.className='t';
+    const b=document.createElement('b');b.textContent=h.title;
+    const a=document.createElement('a');a.textContent='Szukaj';a.target='_blank';a.rel='noopener';
+    a.href='https://www.youtube.com/results?search_query='+encodeURIComponent(h.title);
+    t.append(b,a);
+    const sm=document.createElement('small');sm.textContent=(h.at?h.at+' · ':'')+h.station;
+    li.append(t,sm);ul.append(li);
+  });
+  $('histMore').hidden=histList.length<=5;
+  $('histMore').textContent=histAll?'Pokaż mniej':`Pokaż wszystkie (${histList.length})`;
+}
+$('histMore').onclick=()=>{histAll=!histAll;renderHistory()};
+
+// ---------- budzik ----------
+
+const pad=n=>String(n).padStart(2,'0');
+const durText=s=>{const h=Math.floor(s/3600),m=Math.ceil(s%3600/60);return h?`${h} h ${m} min`:`${m} min`};
+let alDaysSel=0;
+DAY_ORDER.forEach(d=>{const b=document.createElement('button');b.dataset.d=d;b.textContent=DAYS[d];
+  b.onclick=()=>{alDaysSel^=1<<d;b.classList.toggle('on',!!(alDaysSel&1<<d));alarmDirty()};$('alDays').append(b)});
+[0,1,2,5,10,15,20,30].forEach(v=>$('alRamp').add(new Option(v?`${v} min`:'od razu pełna głośność',v)));
+[0,5,10,15,20,30].forEach(v=>$('alSun').add(new Option(v?`${v} min przed`:'bez świtu',v)));
+function alarmDirty(){$('alSaved').textContent='niezapisane zmiany'}
+['alOn','alTime','alStation','alRamp','alSun'].forEach(id=>$(id).addEventListener('change',alarmDirty));
+$('alVol').oninput=e=>{$('alVolv').textContent=e.target.value;alarmDirty()};
+
+// fill = true: przepisz ustawienia do formularza (przy otwarciu zakładki i po zapisie).
+function renderAlarm(fill){
+  const A=st.alarm;if(!A)return;
+  if(fill||!alarmLoaded){
+    alarmLoaded=true;
+    $('alOn').checked=A.on;$('alTime').value=`${pad(A.h)}:${pad(A.m)}`;alDaysSel=A.days;
+    document.querySelectorAll('#alDays button').forEach(b=>b.classList.toggle('on',!!(alDaysSel&1<<b.dataset.d)));
+    const sel=$('alStation');sel.innerHTML='';sel.add(new Option('Ostatnio słuchana',-1));
+    stations.forEach((s,i)=>sel.add(new Option(`${i+1}. ${s.name}`,i)));sel.value=A.station;
+    $('alVol').value=A.vol;$('alVolv').textContent=A.vol;$('alRamp').value=A.ramp;$('alSun').value=A.sunrise;
+    $('alSaved').textContent='';
+  }
+  $('clock').textContent=st.clock||'--:--';
+  $('clockDay').textContent=st.clock?DAY_NAMES[st.wday]:'Czas nie jest jeszcze ustawiony (radio pobiera go z internetu).';
+  $('alNext').textContent=A.ringing?(A.beeping?'Budzik pika (stacja nie zagrała).':'Budzik gra.'):
+    !A.on?'Budzik jest wyłączony.':A.next<0?'Budzik zadzwoni, gdy radio pobierze czas z internetu.':`Zadzwoni za ${durText(A.next)}.`;
+}
+$('alSave').onclick=async()=>{
+  const[h,m]=($('alTime').value||'07:00').split(':').map(Number);
+  await post('/api/alarm',{on:$('alOn').checked?1:0,h,m,days:alDaysSel,station:$('alStation').value,vol:$('alVol').value,ramp:$('alRamp').value,sunrise:$('alSun').value});
+  await status();renderAlarm(true);$('alSaved').textContent='zapisano';
+};
+$('alTest').onclick=()=>{if(st.playing&&!confirm('Radio już gra, więc budzik pokaże tylko świt. Wypróbować?'))return;post('/api/alarm/test').then(status)};
 
 // ---------- Wi-Fi ----------
 
@@ -741,6 +902,17 @@ $('vol').oninput=e=>$('volv').textContent=e.target.value;
 $('vol').onchange=e=>post('/api/volume',{v:e.target.value}).then(status);
 $('add').onsubmit=e=>{e.preventDefault();post('/api/stations/add',new FormData(e.target)).then(r=>r.json()).then(r=>{
   if(r.error){alert('Nie dodano: '+r.error);return}e.target.reset();load()})};
+[[15,'15 min'],[30,'30 min'],[60,'1 h'],[90,'1,5 h'],[0,'Nie wyłączaj']].forEach(([v,l])=>{
+  const b=document.createElement('button');b.dataset.min=v;b.textContent=l;b.onclick=()=>post('/api/sleep',{min:v}).then(status);$('sleepChips').append(b)});
+['toneB','toneM','toneT'].forEach(id=>{
+  $(id).oninput=e=>$(id+'v').textContent=db(+e.target.value);
+  $(id).onchange=e=>post('/api/tone',{[id.slice(-1).toLowerCase()]:e.target.value}).then(status)});
+[['Płasko','0,0,0'],['Więcej basu','6,0,-2'],['Mowa','-4,4,1'],['Jaśniej','0,1,5'],['Cicho w nocy','-6,2,-4']].forEach(([l,v])=>{
+  const b=document.createElement('button');b.dataset.v=v;b.textContent=l;
+  b.onclick=()=>{const[x,y,z]=v.split(',');post('/api/tone',{b:x,m:y,t:z}).then(status)};$('tonePresets').append(b)});
+$('clapOn').onchange=e=>post('/api/clap',{on:e.target.checked?1:0}).then(status);
+[[1,'Niska'],[2,'Średnia'],[3,'Wysoka']].forEach(([v,l])=>{const b=document.createElement('button');b.dataset.s=v;b.textContent=l;
+  b.onclick=()=>post('/api/clap',{sens:v}).then(status);$('clapSens').append(b)});
 $('reset').onclick=()=>{if(confirm('Zastąpić listę stacji domyślną? Stacje dodane ręcznie zostaną usunięte.'))post('/api/stations/reset',{}).then(load).then(status)};
 
 MODES.forEach(([m,label])=>{const b=document.createElement('button');b.dataset.m=m;b.textContent=label;
