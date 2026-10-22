@@ -9,6 +9,7 @@ constexpr int I2S_MCLK = 12;
 constexpr int I2S_BCLK = 13;
 constexpr int I2S_LRCK = 14;
 constexpr int I2S_DOUT = 16;  // do ES8311 (głośnik)
+constexpr int I2S_DIN = 15;   // z ES7210 (mikrofony)
 constexpr int I2C_SDA = 11;
 constexpr int I2C_SCL = 10;
 constexpr int BOOT_BUTTON = 0;
@@ -35,6 +36,11 @@ constexpr uint8_t KEY3 = 0x08;
 bool begin();
 
 void setAmplifier(bool on);
+
+// Konfiguruje ES7210 (mikrofony) jako slave I2S: MIC1 w lewym, MIC2 w prawym kanale, słowo 32 bit,
+// wzmocnienie 30 dB. Zegary daje I2S biblioteki audio (64 takty BCLK na ramkę), więc zwykły
+// format I2S pasuje bez TDM. Wołaj po begin().
+bool beginMics();
 
 // Maska wciśniętych przycisków KEY1..KEY3 (bit ustawiony = wciśnięty).
 uint8_t readKeys();

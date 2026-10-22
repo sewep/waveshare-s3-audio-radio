@@ -5,8 +5,9 @@
 static const char FAVICON_SVG[] PROGMEM = R"SVG(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#2563eb"/><path d="M22 23 44 11" stroke="#fff" stroke-width="4" stroke-linecap="round"/><rect x="10" y="23" width="44" height="31" rx="7" fill="#fff"/><circle cx="24" cy="38.5" r="8" fill="#2563eb"/><circle cx="24" cy="38.5" r="3" fill="#fff"/><rect x="37" y="31" width="11" height="4" rx="2" fill="#2563eb"/><rect x="37" y="37" width="11" height="4" rx="2" fill="#2563eb"/><rect x="37" y="43" width="11" height="4" rx="2" fill="#2563eb"/></svg>)SVG";
 
 // Strona radia, ta sama w trybie normalnym i w trybie konfiguracji (hotspot). Zakładki: Radio,
-// Stacje, Światło, Wi-Fi, Pomoc; aktywna zakładka jest w adresie (#radio, #stacje, #swiatlo,
-// #wifi, #pomoc). Sekcje mają data-tab, a nie id, żeby przeglądarka nie przewijała do nich pod
+// Stacje, Światło, Wi-Fi, Stan, Pomoc; aktywna zakładka jest w adresie (#radio, #stacje, #swiatlo,
+// #wifi, #stan, #pomoc). Zakładka Stan pyta o poziomy dźwięku co 150 ms i o resztę co 2 s, tylko
+// gdy jest otwarta. Sekcje mają data-tab, a nie id, żeby przeglądarka nie przewijała do nich pod
 // przyklejony pasek zakładek. W trybie konfiguracji (/api/wifi zwraca "ap":true) widać tylko Wi-Fi.
 //
 // Nagłówek to rysunek radia na tle nocnego nieba: wyświetlacz pokazuje numer i nazwę stacji,
@@ -39,6 +40,7 @@ p{margin:6px 0}
 button{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:8px;padding:8px 12px;cursor:pointer}
 button:disabled{opacity:.5;cursor:default}
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.small{padding:4px 8px;font-size:13px}
 button.del{color:var(--danger);border-color:transparent;background:none;padding:8px}
 input[type=range]{flex:1;min-width:120px}
 input[type=text],input[type=url],input[type=password]{font:inherit;width:100%;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg)}
@@ -66,6 +68,18 @@ td:first-child{font-weight:600;white-space:nowrap}
 ol,ul.dots{margin:6px 0;padding-left:20px}
 ul.dots{list-style:disc}ol li,ul.dots li{display:list-item;border:none;padding:2px 0}
 code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:0 4px;font-size:14px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.grid2 label{font-size:13px;color:var(--muted);display:grid;gap:2px}
+.grid2 label input{color:var(--fg)}
+fieldset{border:none;margin:0;padding:0;display:grid;gap:4px}
+.meter{display:grid;grid-template-columns:6.2em 1fr 5.4em;gap:8px;align-items:center;margin:8px 0;font-size:14px}
+.meter .db{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums;font-size:13px}
+.bar{position:relative;height:14px;border-radius:7px;background:var(--bg);border:1px solid var(--line);overflow:hidden}
+.bar i{position:absolute;inset:0;background:linear-gradient(90deg,#22c55e 0,#22c55e 62%,#eab308 82%,#ef4444 100%);clip-path:inset(0 100% 0 0);transition:clip-path .12s linear}
+.bar b{position:absolute;top:0;bottom:0;width:2px;left:0;background:var(--fg);opacity:.7;transition:left .12s linear}
+.bar.buf i{background:var(--accent);opacity:.75}
+.scale{display:grid;grid-template-columns:6.2em 1fr 5.4em;gap:8px;font-size:11px;color:var(--muted)}
+.scale div{display:flex;justify-content:space-between}
 #apInfo{display:none}
 body.ap #apInfo{display:block}
 body.ap nav,body.ap .sta{display:none}
@@ -195,7 +209,7 @@ body.ap nav,body.ap .sta{display:none}
 </svg>
 </header>
 <nav>
-  <a href="#radio">Radio</a><a href="#stacje">Stacje</a><a href="#swiatlo">Światło</a><a href="#wifi">Wi-Fi</a><a href="#pomoc">Pomoc</a>
+  <a href="#radio">Radio</a><a href="#stacje">Stacje</a><a href="#swiatlo">Światło</a><a href="#wifi">Wi-Fi</a><a href="#stan">Stan</a><a href="#pomoc">Pomoc</a>
 </nav>
 <main>
 
@@ -290,6 +304,21 @@ body.ap nav,body.ap .sta{display:none}
     <table id="wifiNow"></table>
     <p class="warn" id="wifiWarn" hidden></p>
   </div>
+  <div class="card sta">
+    <h2>Adres IP</h2>
+    <fieldset>
+      <label class="row"><input type="radio" name="ipmode" value="dhcp"> Automatycznie (DHCP)</label>
+      <label class="row"><input type="radio" name="ipmode" value="static"> Stały adres</label>
+    </fieldset>
+    <div class="grid2" id="ipFields" style="margin:8px 0">
+      <label>Adres IP<input type="text" id="ipAddr" inputmode="decimal" placeholder="192.168.1.50"></label>
+      <label>Maska<input type="text" id="ipMask" inputmode="decimal" placeholder="255.255.255.0"></label>
+      <label>Brama<input type="text" id="ipGw" inputmode="decimal" placeholder="192.168.1.1"></label>
+      <label>DNS<input type="text" id="ipDns" inputmode="decimal" placeholder="jak brama"></label>
+    </div>
+    <button class="primary" id="ipSave">Zapisz i połącz ponownie</button>
+    <p class="muted" id="ipNote"></p>
+  </div>
   <div class="card">
     <h2>Zapamiętane sieci</h2>
     <ul id="saved"></ul>
@@ -313,6 +342,30 @@ body.ap nav,body.ap .sta{display:none}
   </div>
 </section>
 
+<section data-tab="stan">
+  <div class="card">
+    <h2>Poziomy dźwięku</h2>
+    <div class="meter"><span>Głośnik</span><div class="bar" id="lvOut"><i></i><b></b></div><span class="db" id="lvOutV">—</span></div>
+    <div class="meter"><span>Mikrofon 1</span><div class="bar" id="lvMic0"><i></i><b></b></div><span class="db" id="lvMic0V">—</span></div>
+    <div class="meter"><span>Mikrofon 2</span><div class="bar" id="lvMic1"><i></i><b></b></div><span class="db" id="lvMic1V">—</span></div>
+    <div class="scale"><span></span><div><span>−60</span><span>−40</span><span>−20</span><span>0 dBFS</span></div><span></span></div>
+    <p class="muted">Pasek to średni poziom z ostatnich 100 ms, kreska to szczyt (wolno opada); liczby: średnio / szczyt. Głośnik to sygnał po regulacji głośności, czyli to, co dostaje wzmacniacz. Mikrofony mają wzmocnienie 30 dB i słyszą także sam głośnik.</p>
+  </div>
+  <div class="card">
+    <h2>Strumień</h2>
+    <table id="dStream"></table>
+    <div class="meter" style="margin-top:4px"><span>Bufor</span><div class="bar buf" id="dBuf"><i></i></div><span class="db" id="dBufV">—</span></div>
+  </div>
+  <div class="card">
+    <h2>Wi-Fi</h2>
+    <table id="dWifi"></table>
+  </div>
+  <div class="card">
+    <h2>System</h2>
+    <table id="dSys"></table>
+  </div>
+</section>
+
 <section data-tab="pomoc">
   <div class="card">
     <h2>Przyciski na płytce</h2>
@@ -331,7 +384,7 @@ body.ap nav,body.ap .sta{display:none}
     <ul class="dots">
       <li>Kliknij stację na liście, żeby jej słuchać. Radio pamięta ostatnią stację i głośność, a po włączeniu zasilania samo zaczyna grać.</li>
       <li>Przy starcie i każdej zmianie stacji radio mówi jej numer z listy, więc przełączając przyciskami wiesz, gdzie jesteś. Zapowiedź wyłączysz w zakładce Stacje.</li>
-      <li>Strona działa na każdym urządzeniu w tej samej sieci pod adresem <code>http://radio.local</code>. Jeśli adres się nie otwiera, użyj numeru IP z sekcji poniżej albo rozłącz VPN.</li>
+      <li>Strona działa na każdym urządzeniu w tej samej sieci pod adresem <code>http://radio.local</code>. Jeśli adres się nie otwiera, użyj numeru IP z zakładki Stan albo rozłącz VPN.</li>
       <li>Gdy strumień się urwie, radio po kilku sekundach samo połączy się ponownie.</li>
       <li>Zmiany zrobione przyciskami pojawiają się na stronie po kilku sekundach.</li>
     </ul>
@@ -346,10 +399,6 @@ body.ap nav,body.ap .sta{display:none}
       <li>Wybierz sieć, wpisz hasło i zapisz. Zapisane sieci, lista stacji i ustawienia zostają.</li>
     </ol>
     <p class="muted">Gdy przez 5 minut nikt nie jest połączony z hotspotem, radio samo wraca do zapamiętanych sieci.</p>
-  </div>
-  <div class="card">
-    <h2>Urządzenie</h2>
-    <table id="device"></table>
   </div>
 </section>
 
@@ -446,6 +495,7 @@ function showTab(){
   document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.hash==='#'+id));
   window.scrollTo(0,0);
   if(id==='wifi'&&!apMode)wifiInfo();
+  if(id==='stan')diag();
 }
 window.onhashchange=showTab;showTab();
 
@@ -498,8 +548,6 @@ function render(){
   }
 
   const rssi=st.rssi!==undefined?`${st.rssi} dBm`+['',' (słaby)',' (średni)',' (dobry)',' (bardzo dobry)'][signal(st.rssi)]:'—';
-  tableRows('device',[['Adres',st.host?`http://${st.host}`:'—'],['IP',st.ip||'—'],['Wi-Fi',st.ssid?`${st.ssid}, ${rssi}`:'—'],
-    ['Bateria',st.battery>=0?`${st.battery}%`:'pomiar niepodłączony']]);
   tableRows('wifiNow',[['Sieć',st.ssid||'—'],['Sygnał',rssi,st.rssi!==undefined?bars(st.rssi):''],['IP',st.ip||'—'],['Adres',st.host?`http://${st.host}`:'—']]);
   renderHero();
 }
@@ -508,15 +556,24 @@ function render(){
 
 async function wifiInfo(){try{wifi=await (await fetch('/api/wifi',{cache:'no-store'})).json();renderWifi()}catch(e){}}
 
+const savedNames=()=>wifi.saved.map(s=>s.ssid);
+let ipTouched=false;
+
 function renderWifi(){
   const ul=$('saved');ul.innerHTML='';
   if(!wifi.saved.length)ul.innerHTML='<li class="muted">Brak zapamiętanych sieci.</li>';
-  wifi.saved.forEach((s,i)=>{
+  wifi.saved.forEach(({ssid:s,ip},i)=>{
     const li=document.createElement('li');
-    const n=document.createElement('span');n.className='name';n.textContent=s;n.onclick=()=>pick(s);
+    const n=document.createElement('div');n.className='url';n.textContent=s;n.style.cursor='pointer';n.onclick=()=>pick(s);
+    const sm=document.createElement('small');sm.textContent=ip?`stały adres ${ip.split(' ')[0]}`:'adres z DHCP';n.append(sm);
     const b=document.createElement('span');b.className='badge'+(s===wifi.connected?' on':'');
     b.textContent=s===wifi.connected?'połączona':i===0?'główna':'zapasowa';
-    li.append(n,b);
+    li.append(n);
+    if(ip&&s!==wifi.connected){  // np. w hotspocie po nieudanej zmianie adresu
+      const r=document.createElement('button');r.className='small';r.textContent='DHCP';r.title='Przywróć automatyczny adres';
+      r.onclick=()=>post('/api/wifi/ip',{ssid:s,mode:'dhcp'}).then(wifiInfo);li.append(r);
+    }
+    li.append(b);
     if(s!==wifi.connected){
       const d=document.createElement('button');d.className='del';d.textContent='✕';d.title='Zapomnij';
       d.onclick=()=>{if(confirm(`Zapomnieć sieć „${s}”?`))post('/api/wifi/forget',{ssid:s}).then(wifiInfo)};
@@ -524,9 +581,10 @@ function renderWifi(){
     }
     ul.append(li);
   });
+  renderIp();
   $('wifiWarn').hidden=!wifi.failed;
   $('wifiWarn').textContent=`Nie udało się połączyć z „${wifi.failed}”, więc radio wróciło do „${wifi.connected}”. Sprawdź nazwę sieci i hasło.`;
-  const list=wifi.saved.map(s=>`„${s}”`).join(' ani ');
+  const list=savedNames().map(s=>`„${s}”`).join(' ani ');
   $('apReason').textContent={
     button:'Tryb konfiguracji włączyło przytrzymanie BOOT. Zapamiętane sieci zostały: możesz dodać nową albo wrócić bez zmian (to samo robi ponowne przytrzymanie BOOT).',
     failed:`Radio nie połączyło się z ${list}. Sprawdź router albo wybierz inną sieć.`,
@@ -538,7 +596,7 @@ function renderWifi(){
 
 function passHint(){
   const s=$('ssidIn').value,h=$('passHint');
-  h.textContent=openNets.has(s)?'Sieć otwarta, bez hasła.':wifi.saved.includes(s)?'Zostaw hasło puste, żeby zachować zapamiętane.':'';
+  h.textContent=openNets.has(s)?'Sieć otwarta, bez hasła.':savedNames().includes(s)?'Zostaw hasło puste, żeby zachować zapamiętane.':'';
   h.hidden=!h.textContent;
 }
 function pick(ssid){$('ssidIn').value=ssid;$('passIn').value='';passHint();
@@ -568,17 +626,48 @@ function showNets(list){
     const m=document.createElement('span');m.className='muted';m.textContent=`${n.rssi} dBm`;
     if(n.lock)m.insertAdjacentHTML('afterbegin',LOCK+' ');
     li.append(s,m);
-    if(wifi.saved.includes(n.ssid)){const b=document.createElement('span');b.className='badge';b.textContent='zapamiętana';li.insertBefore(b,m)}
+    if(savedNames().includes(n.ssid)){const b=document.createElement('span');b.className='badge';b.textContent='zapamiętana';li.insertBefore(b,m)}
     li.onclick=()=>pick(n.ssid);ul.append(li);
   });
   passHint();
 }
 
-function wifiDone(msg,reload){
+// reload: po restarcie radia czekaj, aż odpowie, i otwórz stronę (pod nowym adresem, jeśli strona
+// była otwarta po numerze IP, który się zmienia).
+function wifiDone(msg,reload,newIp){
   $('doneMsg').textContent=msg;$('wifiDone').hidden=false;$('wifiDone').scrollIntoView({behavior:'smooth'});
   if(!reload)return;
-  setTimeout(()=>{const t=setInterval(async()=>{try{if((await fetch('/api/status',{cache:'no-store'})).ok){clearInterval(t);location.reload()}}catch(e){}},2000)},6000);
+  const byIp=/^[0-9.]+$/.test(location.hostname),base=byIp&&newIp?`http://${newIp}`:'';
+  setTimeout(()=>{const t=setInterval(async()=>{try{
+    await fetch(base+'/api/wifi',{cache:'no-store',mode:base?'no-cors':'cors'});
+    clearInterval(t);if(base)location.href=base+'/#wifi';else location.reload();
+  }catch(e){}},2000)},6000);
 }
+
+function renderIp(){
+  const cur=wifi.saved.find(s=>s.ssid===wifi.connected);
+  if(!cur)return;
+  if(!ipTouched){
+    const[ip,mask,gw,dns]=cur.ip?cur.ip.split(' '):[wifi.ip,wifi.mask,wifi.gw,wifi.dns];
+    $('ipAddr').value=ip||'';$('ipMask').value=mask||'';$('ipGw').value=gw||'';$('ipDns').value=dns||'';
+    document.querySelector(`input[name=ipmode][value=${cur.ip?'static':'dhcp'}]`).checked=true;
+  }
+  const st=document.querySelector('input[name=ipmode]:checked').value==='static';
+  $('ipFields').style.display=st?'':'none';
+  $('ipNote').textContent=`Dotyczy sieci „${cur.ssid}”. `+(st?'Adres musi być w tej samej sieci co brama i poza pulą DHCP routera (albo zarezerwuj go w routerze). ':
+    (wifi.static?'':'Pola podpowiadają adres przydzielony teraz przez router. '))+
+    'Gdy po zmianie strona się nie otworzy, przytrzymaj BOOT: w trybie konfiguracji przywrócisz DHCP przyciskiem przy sieci.';
+}
+document.querySelectorAll('input[name=ipmode]').forEach(r=>r.onchange=()=>{ipTouched=true;renderIp()});
+['ipAddr','ipMask','ipGw','ipDns'].forEach(id=>$(id).oninput=()=>ipTouched=true);
+$('ipSave').onclick=async()=>{
+  const st=document.querySelector('input[name=ipmode]:checked').value==='static';
+  const d={ssid:wifi.connected,mode:st?'static':'dhcp',ip:$('ipAddr').value.trim(),mask:$('ipMask').value.trim(),gw:$('ipGw').value.trim(),dns:$('ipDns').value.trim()};
+  const r=await (await post('/api/wifi/ip',d)).json();
+  if(r.error){alert('Nie zapisano: '+r.error);return}
+  wifiDone(st?`Radio łączy się ponownie z adresem ${d.ip}. Strona otworzy się sama, gdy radio wróci (ok. 20 s); radio.local też zadziała.`:
+    'Radio łączy się ponownie i pobierze adres z routera. Strona odświeży się sama; jeśli była otwarta po numerze IP, użyj http://radio.local.',true,st?d.ip:'');
+};
 
 $('scan').onclick=scan;
 $('ssidIn').oninput=passHint;
@@ -587,7 +676,7 @@ $('wifiForm').onsubmit=async e=>{
   e.preventDefault();
   const ssid=$('ssidIn').value,pass=$('passIn').value,d={ssid,pass};
   if(!pass&&!openNets.has(ssid)){
-    if(wifi.saved.includes(ssid))d.keep=1;
+    if(savedNames().includes(ssid))d.keep=1;
     else if(!confirm(`Połączyć z siecią „${ssid}” bez hasła?`))return;
   }
   const r=await (await post('/api/wifi',d)).json();
@@ -596,6 +685,50 @@ $('wifiForm').onsubmit=async e=>{
   else wifiDone(`Radio uruchamia się ponownie i łączy z siecią „${ssid}”. Strona odświeży się sama, gdy radio wróci (do ok. 40 s). Jeśli telefon jest w innej sieci, przełącz go i otwórz http://radio.local.`,true);
 };
 $('apCancel').onclick=()=>post('/api/wifi/cancel').then(()=>wifiDone('Radio wraca do zapamiętanych sieci. Połącz telefon z domową siecią i za chwilę otwórz http://radio.local.'));
+
+// ---------- stan ----------
+
+const stanOpen=()=>!document.hidden&&document.querySelector('section[data-tab="stan"]').classList.contains('on');
+const peaks={};
+function meter(id,[rms,pk]){
+  const pct=db=>Math.max(0,Math.min(100,(db+60)/60*100));
+  peaks[id]=Math.max(pk,(peaks[id]??-120)-1.5);  // szczyt opada 1,5 dB na odczyt
+  $(id).querySelector('i').style.clipPath=`inset(0 ${100-pct(rms)}% 0 0)`;
+  $(id).querySelector('b').style.left=`calc(${pct(peaks[id])}% - 2px)`;
+  $(id+'V').textContent=rms<=-119?'cisza':`${rms.toFixed(0)} / ${pk.toFixed(0)}`;
+}
+async function levels(){
+  if(stanOpen()){try{const l=await (await fetch('/api/levels',{cache:'no-store'})).json();
+    meter('lvOut',l.out);meter('lvMic0',l.mic[0]);meter('lvMic1',l.mic[1])}catch(e){}}
+  setTimeout(levels,stanOpen()?150:1000);
+}
+
+const kb=n=>n>=1048576?(n/1048576).toFixed(1).replace('.',',')+' MB':Math.round(n/1024)+' KB';
+const dur=s=>{const d=Math.floor(s/86400),h=Math.floor(s/3600)%24,m=Math.floor(s/60)%60;
+  return(d?d+' d ':'')+(d||h?h+' h ':'')+m+' min'+(d||h?'':` ${s%60} s`)};
+async function diag(){
+  if(!stanOpen())return;
+  let d;try{d=await (await fetch('/api/diag',{cache:'no-store'})).json()}catch(e){return}
+  const S=d.stream,W=d.wifi,Y=d.sys,cur=stations[st.station];
+  const on=S.playing&&S.codec&&S.codec!=='NONE';
+  tableRows('dStream',[
+    ['Stacja',(cur?`${st.station+1}. ${cur.name}`:'—')+(S.name&&cur&&S.name!==cur.name?` („${S.name}”)`:'')],
+    ...(S.genre?[['Gatunek',S.genre]]:[]),...(S.desc?[['Opis',S.desc]]:[]),
+    ['Format',on?`${S.codec}${S.bitrate?`, ${Math.round(S.bitrate/1000)} kb/s`:''}`:'—'],
+    ['Dźwięk',on&&S.rate?`${(S.rate/1000).toString().replace('.',',')} kHz, ${S.channels===1?'mono':'stereo'}, ${S.bits} bit`:'—'],
+    ['Gra od',S.since>=0?dur(S.since):'—'],['Zerwania',String(S.losses)],
+    ['Adres',S.url||'—'],...(S.web?[['Strona',S.web]]:[])]);
+  const sec=S.bitrate?S.buf/(S.bitrate/8):0;
+  $('dBuf').querySelector('i').style.clipPath=`inset(0 ${100-(S.bufSize?S.buf/S.bufSize*100:0)}% 0 0)`;
+  $('dBufV').textContent=S.bufSize?`${kb(S.buf)}`+(on&&sec?`, ${sec.toFixed(0)} s`:''):'—';
+  const q=['',' (słaby)',' (średni)',' (dobry)',' (bardzo dobry)'][signal(W.rssi)];
+  tableRows('dWifi',[['Sieć',W.ssid||'—'],['Sygnał',`${W.rssi} dBm${q}`,bars(W.rssi)],['Kanał',String(W.channel)],['Punkt dostępu',W.bssid],
+    ['IP',`${W.ip} (${W.static?'stały':'DHCP'})`],['Maska',W.mask],['Brama',W.gw],['DNS',W.dns],['MAC',W.mac],['Adres',`http://${W.host}`]]);
+  tableRows('dSys',[['Czas pracy',dur(Y.uptime)],['Ostatni restart',Y.reset],['Temperatura układu',`${Y.temp.toFixed(0)} °C`],
+    ['RAM wolny',`${kb(Y.heap)} (najmniej ${kb(Y.heapMin)})`],['PSRAM wolny',`${kb(Y.psram)} z ${kb(Y.psramSize)}`],
+    ['FFat',Y.fs>=0?`${kb(Y.fs)} z ${kb(Y.fsSize)}`:'niezamontowany'],['Bateria',st.battery>=0?`${st.battery}%`:'pomiar niepodłączony'],
+    ['Procesor',`ESP32-S3, ${Y.cpu} MHz, flash ${kb(Y.flash)}`],['Oprogramowanie',`Arduino ${Y.core}, ESP-IDF ${Y.sdk}`],['Zbudowano',Y.build]]);
+}
 
 // ---------- sterowanie ----------
 
@@ -621,6 +754,6 @@ $('ledDark').onchange=e=>post('/api/led',{dark:e.target.checked?1:0}).then(statu
   await wifiInfo();
   apMode=!!wifi.ap;
   if(apMode){document.body.classList.add('ap');showTab();renderHero();scan()}
-  else{load().then(status);setInterval(status,3000)}
+  else{load().then(status);setInterval(status,3000);setInterval(diag,2000);levels()}
 })();
 </script></body></html>)HTML";

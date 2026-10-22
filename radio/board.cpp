@@ -14,6 +14,9 @@ constexpr uint8_t AMP_ENABLE_BIT = 0x01;  // EXIO8 = port 1, bit 0
 constexpr uint8_t ES8311_ADDR = 0x18;
 constexpr uint8_t ES8311_CHIP_ID = 0x83;
 
+constexpr uint8_t ES7210_ADDR = 0x40;
+constexpr uint8_t ES7210_MIC_GAIN = 0x0A;  // 30 dB, krok 3 dB (jak domyślnie w esp_codec_dev)
+
 bool writeReg(uint8_t addr, uint8_t reg, uint8_t val) {
   Wire.beginTransmission(addr);
   Wire.write(reg);
@@ -63,6 +66,57 @@ bool initEs8311() {
   return true;
 }
 
+bool updateReg(uint8_t addr, uint8_t reg, uint8_t mask, uint8_t val) {
+  int v = readReg(addr, reg);
+  return v >= 0 && writeReg(addr, reg, (v & ~mask) | (val & mask));
+}
+
+// Włącza MIC1 i MIC2, wyłącza MIC3 (na tej płytce to pętla zwrotna z głośnika dla AEC) i MIC4.
+bool es7210SelectMics() {
+  bool ok = true;
+  for (uint8_t r = 0x43; r <= 0x46; r++) ok &= updateReg(ES7210_ADDR, r, 0x10, 0x00);
+  ok &= writeReg(ES7210_ADDR, 0x4B, 0xFF) && writeReg(ES7210_ADDR, 0x4C, 0xFF);
+  ok &= updateReg(ES7210_ADDR, 0x01, 0x0B, 0x00);  // zegary ADC1/ADC2
+  ok &= writeReg(ES7210_ADDR, 0x4B, 0x00);         // bias, ADC i PGA dla MIC1/MIC2
+  for (uint8_t r = 0x43; r <= 0x44; r++) ok &= updateReg(ES7210_ADDR, r, 0x1F, 0x10 | ES7210_MIC_GAIN);
+  ok &= writeReg(ES7210_ADDR, 0x12, 0x00);  // bez TDM: MIC1/MIC2 na SDOUT1
+  return ok;
+}
+
+// Sekwencja jak w sterowniku es7210 z esp_codec_dev (używa go xiaozhi): open, set_fs, enable.
+bool initEs7210() {
+  static const uint8_t open[][2] = {
+      {0x00, 0xFF}, {0x00, 0x41},  // reset
+      {0x01, 0x3F},                // zegary wyłączone na czas konfiguracji
+      {0x09, 0x30}, {0x0A, 0x30},  // czasy stanów przy starcie
+      {0x23, 0x2A}, {0x22, 0x0A}, {0x20, 0x0A}, {0x21, 0x2A},  // filtry górnoprzepustowe
+  };
+  for (auto& r : open) {
+    if (!writeReg(ES7210_ADDR, r[0], r[1])) {
+      log_e("ES7210 nie odpowiada (rejestr 0x%02X)", r[0]);
+      return false;
+    }
+  }
+  bool ok = updateReg(ES7210_ADDR, 0x08, 0x01, 0x00);  // slave
+  static const uint8_t analog[][2] = {
+      {0x40, 0x43},                // zasilanie części analogowej, VDDA 3,3 V
+      {0x41, 0x70}, {0x42, 0x70},  // bias mikrofonów 2,87 V
+      {0x07, 0x20}, {0x02, 0xC1},  // OSR i dzielnik ADC dla MCLK = 256 * fs
+  };
+  for (auto& r : analog) ok &= writeReg(ES7210_ADDR, r[0], r[1]);
+  ok &= es7210SelectMics();
+  ok &= updateReg(ES7210_ADDR, 0x11, 0xE3, 0x80);  // słowo 32 bit, format I2S
+  // start
+  int clockOff = readReg(ES7210_ADDR, 0x01);
+  ok &= clockOff >= 0 && writeReg(ES7210_ADDR, 0x01, clockOff);
+  ok &= writeReg(ES7210_ADDR, 0x06, 0x00) && writeReg(ES7210_ADDR, 0x40, 0x43);
+  for (uint8_t r = 0x47; r <= 0x4A; r++) ok &= writeReg(ES7210_ADDR, r, 0x08);
+  ok &= es7210SelectMics();
+  ok &= writeReg(ES7210_ADDR, 0x40, 0x43) && writeReg(ES7210_ADDR, 0x00, 0x71) && writeReg(ES7210_ADDR, 0x00, 0x41);
+  if (!ok) log_e("ES7210: konfiguracja nie powiodła się");
+  return ok;
+}
+
 }  // namespace
 
 void setAmplifier(bool on) {
@@ -104,5 +158,7 @@ bool begin() {
   setAmplifier(true);
   return initEs8311();
 }
+
+bool beginMics() { return initEs7210(); }
 
 }  // namespace board

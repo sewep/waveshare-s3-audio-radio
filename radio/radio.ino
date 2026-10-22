@@ -13,7 +13,9 @@
 // Bez zapisanej sieci (albo gdy połączenie się nie uda) radio wystawia hotspot "Radio-XXXX",
 // a konfiguracja Wi-Fi jest pod http://192.168.4.1. Sieć można też zmienić na stronie (zakładka Wi-Fi).
 // Radio pamięta dwie sieci: ostatnio użytą i poprzednią, więc literówka w haśle nowej sieci
-// nie odcina go od internetu.
+// nie odcina go od internetu. Każda z nich może mieć stały adres IP zamiast DHCP.
+// Zakładka Stan pokazuje dane strumienia, Wi-Fi i systemu oraz poziomy dźwięku: wyjście na
+// głośnik (po regulacji głośności) i oba mikrofony.
 
 #include <Arduino.h>
 #include <DNSServer.h>
@@ -28,6 +30,7 @@
 #include "Audio.h"
 #include "board.h"
 #include "leds.h"
+#include "mics.h"
 #include "station_numbers.h"
 #include "web_page.h"
 
@@ -40,6 +43,9 @@ static const uint32_t SLOW_STREAM_SHOW_MS = 3000;  // „slow stream” przychod
 static const uint32_t WIFI_SETUP_PRESS_MS = 3000;
 static const uint32_t SETUP_IDLE_RESTART_MS = 5 * 60 * 1000;  // hotspot bez gości = ponowna próba Wi-Fi
 static const uint32_t RESTART_DELAY_MS = 1000;  // czas na wysłanie odpowiedzi przed restartem
+static const uint32_t STREAM_STATS_MS = 1000;
+static const uint32_t LEVELS_AWAKE_MS = 5000;  // pomiar wyjścia trwa, póki strona pyta o poziomy
+static const uint32_t LEVELS_STALE_MS = 500;
 static const uint32_t KEY_POLL_MS = 20;
 static const uint32_t BATTERY_POLL_MS = 10000;
 static const size_t MAX_STATIONS = 99;  // zapowiedź numeru tylko do STATION_NUMBER_COUNT
@@ -112,7 +118,18 @@ SetupReason setupReason = SetupReason::NoNetwork;
 String wifiSsid;           // sieć, z którą radio jest połączone
 String hotspotSsid;        // nazwa hotspotu w trybie konfiguracji
 String wifiFailedSsid;     // sieć główna, która przy tym starcie nie odpowiedziała (radio wzięło zapasową)
+bool wifiStatic = false;   // bieżąca sieć ma stały adres IP
 uint32_t restartAtMs = 0;  // zaplanowany restart (0 = brak)
+
+// Zapamiętana sieć: 0 = główna (klucze ssid, pass, ipcfg), 1 = zapasowa (ssid2, pass2, ipcfg2).
+// ipcfg = "ip maska brama dns" albo pusty napis (DHCP).
+struct WifiSlot {
+  String ssid, pass, ipcfg;
+};
+
+struct IpConfig {
+  IPAddress ip, mask, gw, dns;
+};
 uint32_t lastStreamOkMs = 0;
 int battery = -1;
 
@@ -145,9 +162,26 @@ struct AudioMsg {
 
 QueueHandle_t audioQueue;
 
-// Tytuł utworu ustawia zadanie audio, a czyta serwer WWW w loop().
+// Tytuł utworu i nagłówki ICY ustawia zadanie audio, a czyta serwer WWW w loop().
 SemaphoreHandle_t titleLock;
 String streamTitle;
+String icyName, icyDescription, icyGenre, icyUrl, streamHost;
+
+// Liczby o strumieniu do zakładki Stan; zadanie audio odświeża je co sekundę (tylko ono
+// woła bibliotekę). Rozerwany odczyt w serwerze WWW niczego nie psuje.
+struct StreamStats {
+  const char* codec = "";
+  uint32_t bitrate = 0, sampleRate = 0, bufFilled = 0, bufSize = 0;
+  uint8_t channels = 0, bits = 0;
+};
+StreamStats streamStats;
+volatile uint32_t playStartMs = 0;    // pierwsza zdekodowana ramka bieżącej stacji
+volatile uint16_t streamLosses = 0;   // zerwania strumienia od wybrania stacji
+
+// Poziom na wyjściu (po regulacji głośności), liczony w audio_process_i2s z zadania audio.
+volatile uint32_t levelsWantedMs = 0;
+volatile uint32_t outUpdatedMs = 0;
+volatile float outRmsDb = mics::SILENCE_DB, outPeakDb = mics::SILENCE_DB;
 
 void setTitle(const char* t) {
   xSemaphoreTake(titleLock, portMAX_DELAY);
@@ -160,6 +194,19 @@ String title() {
   String t = streamTitle;
   xSemaphoreGive(titleLock);
   return t;
+}
+
+void setStreamInfo(String& field, const char* value) {
+  xSemaphoreTake(titleLock, portMAX_DELAY);
+  field = value;
+  xSemaphoreGive(titleLock);
+}
+
+String streamInfo(const String& field) {
+  xSemaphoreTake(titleLock, portMAX_DELAY);
+  String v = field;
+  xSemaphoreGive(titleLock);
+  return v;
 }
 
 // ---------- trwałe ustawienia ----------
@@ -305,8 +352,47 @@ void runAudioCommand(const AudioMsg& msg) {
   }
 }
 
+void updateStreamStats() {
+  StreamStats s;
+  if (audioRunning) {
+    s.codec = audio.getCodecname();
+    s.bitrate = audio.getBitRate();
+    s.sampleRate = audio.getSampleRate();
+    s.channels = audio.getChannels();
+    s.bits = audio.getBitsPerSample();
+  }
+  s.bufFilled = audio.inBufferFilled();
+  s.bufSize = s.bufFilled + audio.inBufferFree();
+  streamStats = s;
+}
+
+bool levelsWanted() { return levelsWantedMs && millis() - levelsWantedMs < LEVELS_AWAKE_MS; }
+
+// Wołane przez bibliotekę audio (zadanie audio) dla każdej porcji próbek tuż przed I2S, czyli
+// po regulacji głośności: to, co dostaje kodek głośnika.
+void audio_process_i2s(int32_t* buff, int16_t validSamples, bool* continueI2S) {
+  static double sum = 0;
+  static float peak = 0;
+  static int count = 0;
+  if (!levelsWanted()) return;
+  for (int i = 0; i < validSamples; i++) {
+    float s = buff[i] / 2147483648.0f;
+    sum += s * s;
+    peak = max(peak, fabsf(s));
+  }
+  count += validSamples;
+  if (count >= 48000 / 10 * 2) {  // 100 ms stereo
+    float rms = sqrt(sum / count);
+    outRmsDb = rms > 1e-6f ? 20 * log10f(rms) : mics::SILENCE_DB;
+    outPeakDb = peak > 1e-6f ? 20 * log10f(peak) : mics::SILENCE_DB;
+    outUpdatedMs = millis();
+    sum = peak = count = 0;
+  }
+}
+
 void audioTask(void*) {
   static AudioMsg batch[8];
+  uint32_t lastStats = 0;
   for (;;) {
     int n = 0;
     while (n < 8 && xQueueReceive(audioQueue, &batch[n], 0) == pdTRUE) n++;
@@ -322,6 +408,10 @@ void audioTask(void*) {
     }
     audio.loop();
     audioRunning = audio.isRunning();
+    if (millis() - lastStats >= STREAM_STATS_MS) {
+      lastStats = millis();
+      updateStreamStats();
+    }
     vTaskDelay(1);
   }
 }
@@ -365,7 +455,12 @@ void startStation(int index, bool announce) {
   saveState();
 }
 
-void play(int index) { startStation(index, true); }
+void play(int index) {
+  for (String* f : {&icyName, &icyDescription, &icyGenre, &icyUrl, &streamHost}) setStreamInfo(*f, "");
+  streamLosses = 0;
+  playStartMs = 0;
+  startStation(index, true);
+}
 
 void stop() {
   playing = false;
@@ -400,14 +495,25 @@ void audioInfo(Audio::msg_t m) {
   // Pierwsza ramka strumienia zdekodowana = gra; koniec ładowania.
   bool decoding = m.e == Audio::evt_bitrate ||
                   (m.e == Audio::evt_info && m.msg && strncmp(m.msg, "SampleRate", 10) == 0);
-  if (decoding && !announcing) loading = false;
+  if (decoding && !announcing) {
+    loading = false;
+    if (!playStartMs) playStartMs = millis();
+  }
   if (m.e == Audio::evt_info && m.msg && strcmp(m.msg, "slow stream") == 0) slowStreamMs = millis();
   // Biblioteka sama łączy się ponownie; do pierwszej ramki to znów ładowanie, tyle że z kłopotem.
   if (m.e == Audio::evt_info && m.msg && strcmp(m.msg, "Stream lost") == 0) {
     loading = true;
     streamTrouble = true;
+    streamLosses++;
   }
   if (m.e == Audio::evt_streamtitle && m.msg) setTitle(m.msg);
+  if (m.msg && !announcing) {
+    if (m.e == Audio::evt_name) setStreamInfo(icyName, m.msg);
+    if (m.e == Audio::evt_icydescription) setStreamInfo(icyDescription, m.msg);
+    if (m.e == Audio::evt_genre) setStreamInfo(icyGenre, m.msg);
+    if (m.e == Audio::evt_icyurl) setStreamInfo(icyUrl, m.msg);
+    if (m.e == Audio::evt_lasthost) setStreamInfo(streamHost, m.msg);  // adres po przekierowaniach
+  }
   Serial.printf("%s: %s\n", m.s ? m.s : "", m.msg ? m.msg : "");
 }
 
@@ -601,12 +707,22 @@ void handleWifiInfo() {
   static const char* REASONS[] = {"none", "failed", "button"};
   String json = String("{\"ap\":") + (apMode ? "true" : "false") + ",\"connected\":\"" +
                 jsonEscape(wifiSsid) + "\",\"saved\":[";
-  String ssid = prefs.getString("ssid", ""), ssid2 = prefs.getString("ssid2", "");
-  if (!ssid.isEmpty()) json += "\"" + jsonEscape(ssid) + "\"";
-  if (!ssid2.isEmpty()) json += String(ssid.isEmpty() ? "" : ",") + "\"" + jsonEscape(ssid2) + "\"";
+  bool first = true;
+  for (int i = 0; i < 2; i++) {
+    WifiSlot s = loadSlot(i);
+    if (s.ssid.isEmpty()) continue;
+    if (!first) json += ',';
+    first = false;
+    json += "{\"ssid\":\"" + jsonEscape(s.ssid) + "\",\"ip\":\"" + s.ipcfg + "\"}";
+  }
   json += String("],\"failed\":\"") + jsonEscape(wifiFailedSsid) + "\",\"hotspot\":\"" + hotspotSsid +
-          "\",\"reason\":\"" + REASONS[(int)setupReason] + "\"}";
-  server.send(200, "application/json", json);
+          "\",\"reason\":\"" + REASONS[(int)setupReason] + "\"";
+  if (!apMode) {
+    json += String(",\"static\":") + (wifiStatic ? "true" : "false") +
+            ",\"ip\":\"" + WiFi.localIP().toString() + "\",\"mask\":\"" + WiFi.subnetMask().toString() +
+            "\",\"gw\":\"" + WiFi.gatewayIP().toString() + "\",\"dns\":\"" + WiFi.dnsIP().toString() + "\"";
+  }
+  server.send(200, "application/json", json + "}");
 }
 
 void handleSaveWifi() {
@@ -621,21 +737,103 @@ void handleSaveWifi() {
   restartAtMs = millis() + RESTART_DELAY_MS;
 }
 
+// Stały adres albo DHCP dla zapamiętanej sieci; dla bieżącej sieci radio od razu się restartuje.
+void handleWifiIp() {
+  String ssid = server.arg("ssid");
+  int slot = findSlot(ssid);
+  if (slot < 0) return sendError("nie ma takiej sieci");
+  WifiSlot s = loadSlot(slot);
+  if (server.arg("mode") == "dhcp") {
+    s.ipcfg = "";
+  } else {
+    String dns = server.arg("dns");
+    if (dns.isEmpty()) dns = server.arg("gw");
+    String cfg = server.arg("ip") + ' ' + server.arg("mask") + ' ' + server.arg("gw") + ' ' + dns;
+    IpConfig c;
+    if (!parseIpConfig(cfg, c)) return sendError("niepoprawny zapis adresu");
+    if (const char* err = checkIpConfig(c)) return sendError(err);
+    // Adres z innej podsieci odciąłby radio od strony (zostałby tylko hotspot przez BOOT).
+    IPAddress here = WiFi.localIP(), mask = WiFi.subnetMask();
+    if (ssid == wifiSsid && !apMode)
+      for (int i = 0; i < 4; i++)
+        if ((c.ip[i] & mask[i]) != (here[i] & mask[i])) return sendError("adres spoza obecnej sieci radia");
+    s.ipcfg = cfg;
+  }
+  storeSlot(slot, s);
+  Serial.printf("Sieć \"%s\": %s\n", ssid.c_str(), s.ipcfg.isEmpty() ? "DHCP" : s.ipcfg.c_str());
+  sendOk();
+  if (ssid == wifiSsid) restartAtMs = millis() + RESTART_DELAY_MS;
+}
+
+const char* resetReasonText() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON: return "włączenie zasilania";
+    case ESP_RST_EXT: return "przycisk RESET";
+    case ESP_RST_SW: return "restart programowy";
+    case ESP_RST_PANIC: return "błąd programu (panic)";
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT: return "watchdog";
+    case ESP_RST_BROWNOUT: return "spadek napięcia zasilania";
+    case ESP_RST_USB: return "USB";
+    case ESP_RST_DEEPSLEEP: return "wybudzenie";
+    default: return "inny";
+  }
+}
+
+String jsonField(const char* name, const String& value) { return String(",\"") + name + "\":\"" + jsonEscape(value) + "\""; }
+String jsonField(const char* name, long value) { return String(",\"") + name + "\":" + value; }
+
+void handleDiag() {
+  StreamStats st = streamStats;
+  uint8_t mac[6];
+  esp_read_mac(mac, ESP_MAC_WIFI_STA);
+  char macStr[18];
+  snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  String url = streamInfo(streamHost);
+  if (url.isEmpty() && currentStation < (int)stations.size()) url = stations[currentStation].url;
+
+  String json = "{\"stream\":{\"playing\":" + String(playing && !loading ? "true" : "false") +
+                jsonField("codec", st.codec) + jsonField("bitrate", st.bitrate) + jsonField("rate", st.sampleRate) +
+                jsonField("channels", st.channels) + jsonField("bits", st.bits) + jsonField("buf", st.bufFilled) +
+                jsonField("bufSize", st.bufSize) + jsonField("url", url) + jsonField("name", streamInfo(icyName)) +
+                jsonField("desc", streamInfo(icyDescription)) + jsonField("genre", streamInfo(icyGenre)) +
+                jsonField("web", streamInfo(icyUrl)) + jsonField("losses", streamLosses) +
+                jsonField("since", playStartMs && playing ? (long)((millis() - playStartMs) / 1000) : -1L) + "}";
+  json += ",\"wifi\":{\"static\":" + String(wifiStatic ? "true" : "false") + jsonField("ssid", wifiSsid) +
+          jsonField("bssid", WiFi.BSSIDstr()) + jsonField("channel", WiFi.channel()) + jsonField("rssi", WiFi.RSSI()) +
+          jsonField("ip", WiFi.localIP().toString()) + jsonField("mask", WiFi.subnetMask().toString()) +
+          jsonField("gw", WiFi.gatewayIP().toString()) + jsonField("dns", WiFi.dnsIP().toString()) +
+          jsonField("mac", macStr) + jsonField("host", String(HOSTNAME) + ".local") + "}";
+  json += ",\"sys\":{\"uptime\":" + String(millis() / 1000) + jsonField("reset", resetReasonText()) +
+          ",\"temp\":" + String(temperatureRead(), 1) + jsonField("heap", ESP.getFreeHeap()) +
+          jsonField("heapMin", ESP.getMinFreeHeap()) + jsonField("psram", ESP.getFreePsram()) +
+          jsonField("psramSize", ESP.getPsramSize()) + jsonField("cpu", ESP.getCpuFreqMHz()) +
+          jsonField("flash", ESP.getFlashChipSize()) + jsonField("fs", fsReady ? (long)FFat.usedBytes() : -1L) +
+          jsonField("fsSize", fsReady ? (long)FFat.totalBytes() : -1L) + jsonField("core", ESP_ARDUINO_VERSION_STR) +
+          jsonField("sdk", ESP.getSdkVersion()) + jsonField("build", __DATE__ " " __TIME__) + "}}";
+  server.send(200, "application/json", json);
+}
+
+void handleLevels() {
+  levelsWantedMs = millis();
+  mics::keepAwake();
+  bool outFresh = millis() - outUpdatedMs < LEVELS_STALE_MS;
+  char json[160];
+  snprintf(json, sizeof(json), "{\"out\":[%.1f,%.1f],\"mic\":[[%.1f,%.1f],[%.1f,%.1f]]}",
+           outFresh ? outRmsDb : mics::SILENCE_DB, outFresh ? outPeakDb : mics::SILENCE_DB,
+           mics::rmsDb(0), mics::peakDb(0), mics::rmsDb(1), mics::peakDb(1));
+  server.send(200, "application/json", json);
+}
+
 // Zapomina sieć, z którą radio nie jest teraz połączone.
 void handleForgetWifi() {
   String ssid = server.arg("ssid");
   if (ssid == wifiSsid) return sendError("tej sieci radio teraz uzywa");
-  if (ssid == prefs.getString("ssid2", "")) {
-    prefs.remove("ssid2");
-    prefs.remove("pass2");
-  } else if (ssid == prefs.getString("ssid", "")) {  // zapasowa zostaje jedyną
-    prefs.putString("ssid", prefs.getString("ssid2", ""));
-    prefs.putString("pass", prefs.getString("pass2", ""));
-    prefs.remove("ssid2");
-    prefs.remove("pass2");
-  } else {
-    return sendError("nie ma takiej sieci");
-  }
+  int slot = findSlot(ssid);
+  if (slot < 0) return sendError("nie ma takiej sieci");
+  if (slot == 0) storeSlot(0, loadSlot(1));  // zapasowa zostaje jedyną
+  storeSlot(1, WifiSlot());
   sendOk();
 }
 
@@ -653,6 +851,7 @@ void setupRoutes() {
   server.on("/api/wifi", HTTP_GET, handleWifiInfo);
   server.on("/api/wifi", HTTP_POST, handleSaveWifi);
   server.on("/api/wifi/forget", HTTP_POST, handleForgetWifi);
+  server.on("/api/wifi/ip", HTTP_POST, handleWifiIp);
   if (apMode) {
     server.on("/api/wifi/cancel", HTTP_POST, [] {  // powrót do zapisanych sieci bez zmian
       sendOk();
@@ -665,6 +864,8 @@ void setupRoutes() {
     });
   } else {
     server.on("/api/status", HTTP_GET, handleStatus);
+    server.on("/api/diag", HTTP_GET, handleDiag);
+    server.on("/api/levels", HTTP_GET, handleLevels);
     server.on("/api/stations", HTTP_GET, handleStations);
     server.on("/api/play", HTTP_POST, handlePlay);
     server.on("/api/stop", HTTP_POST, [] { stop(); sendOk(); });
@@ -685,34 +886,77 @@ void setupRoutes() {
 
 // ---------- Wi-Fi ----------
 
-// Dwie zapamiętane sieci: główna (ssid/pass) i zapasowa (ssid2/pass2). Zapisywana sieć zostaje
-// główną, a dotychczasowa główna zapasową.
+// Dwie zapamiętane sieci (WifiSlot): główna i zapasowa. Zapisywana sieć zostaje główną,
+// a dotychczasowa główna zapasową; stały adres IP zostaje przy swojej sieci.
+static const char* const SLOT_KEYS[2][3] = {{"ssid", "pass", "ipcfg"}, {"ssid2", "pass2", "ipcfg2"}};
+
+// Bez isKey() Preferences loguje błąd przy każdym braku klucza.
+String prefString(const char* key) { return prefs.isKey(key) ? prefs.getString(key) : String(); }
+
+void prefPut(const char* key, const String& value) {
+  if (!value.isEmpty()) prefs.putString(key, value);
+  else if (prefs.isKey(key)) prefs.remove(key);
+}
+
+WifiSlot loadSlot(int i) { return {prefString(SLOT_KEYS[i][0]), prefString(SLOT_KEYS[i][1]), prefString(SLOT_KEYS[i][2])}; }
+
+void storeSlot(int i, const WifiSlot& s) {
+  prefPut(SLOT_KEYS[i][0], s.ssid);
+  prefPut(SLOT_KEYS[i][1], s.pass);
+  prefPut(SLOT_KEYS[i][2], s.ipcfg);
+}
+
+int findSlot(const String& ssid) {
+  for (int i = 0; i < 2; i++)
+    if (!ssid.isEmpty() && prefString(SLOT_KEYS[i][0]) == ssid) return i;
+  return -1;
+}
+
 void rememberWifi(const String& ssid, const String& pass) {
-  String oldSsid = prefs.getString("ssid", "");
-  if (oldSsid != ssid) {
-    if (!oldSsid.isEmpty()) {
-      prefs.putString("ssid2", oldSsid);
-      prefs.putString("pass2", prefs.getString("pass", ""));
-    } else if (prefs.getString("ssid2", "") == ssid) {
-      prefs.remove("ssid2");
-      prefs.remove("pass2");
-    }
+  WifiSlot main = loadSlot(0), spare = loadSlot(1);
+  WifiSlot next{ssid, pass, ""};
+  int known = findSlot(ssid);
+  if (known >= 0) next.ipcfg = loadSlot(known).ipcfg;
+  if (main.ssid != ssid) {
+    if (!main.ssid.isEmpty()) spare = main;
+    else if (spare.ssid == ssid) spare = WifiSlot();
   }
-  prefs.putString("ssid", ssid);
-  prefs.putString("pass", pass);
+  storeSlot(0, next);
+  storeSlot(1, spare);
 }
 
 String savedWifiPassword(const String& ssid) {
-  if (ssid == prefs.getString("ssid", "")) return prefs.getString("pass", "");
-  if (ssid == prefs.getString("ssid2", "")) return prefs.getString("pass2", "");
-  return "";
+  int slot = findSlot(ssid);
+  return slot < 0 ? String() : loadSlot(slot).pass;
 }
 
-bool hasSavedWifi() { return !prefs.getString("ssid", "").isEmpty() || !prefs.getString("ssid2", "").isEmpty(); }
+bool hasSavedWifi() { return !prefString("ssid").isEmpty() || !prefString("ssid2").isEmpty(); }
 
-bool tryWifi(const String& ssid, const String& pass) {
-  WiFi.begin(ssid.c_str(), pass.c_str());
-  Serial.printf("Łączę z Wi-Fi \"%s\"", ssid.c_str());
+bool parseIpConfig(const String& s, IpConfig& c) {
+  int a = s.indexOf(' '), b = s.indexOf(' ', a + 1), d = s.indexOf(' ', b + 1);
+  if (a < 0 || b < 0 || d < 0) return false;
+  return c.ip.fromString(s.substring(0, a)) && c.mask.fromString(s.substring(a + 1, b)) &&
+         c.gw.fromString(s.substring(b + 1, d)) && c.dns.fromString(s.substring(d + 1));
+}
+
+// nullptr = adres pasuje do maski i bramy.
+const char* checkIpConfig(const IpConfig& c) {
+  auto u = [](const IPAddress& a) { return (uint32_t)a[0] << 24 | a[1] << 16 | a[2] << 8 | a[3]; };
+  uint32_t mask = u(c.mask), ip = u(c.ip);
+  if (mask == 0 || (~mask & (~mask + 1)) != 0) return "niepoprawna maska";
+  if ((ip & mask) != (u(c.gw) & mask)) return "brama spoza sieci tego adresu";
+  if ((ip & ~mask) == 0 || (ip & ~mask) == ~mask) return "to adres sieci albo rozgloszeniowy";
+  if (ip == u(c.gw)) return "adres taki sam jak brama";
+  if (u(c.dns) == 0) return "niepoprawny DNS";
+  return nullptr;
+}
+
+bool tryWifi(const WifiSlot& s) {
+  IpConfig c;
+  if (parseIpConfig(s.ipcfg, c)) WiFi.config(c.ip, c.gw, c.mask, c.dns);
+  else WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE);  // DHCP
+  WiFi.begin(s.ssid.c_str(), s.pass.c_str());
+  Serial.printf("Łączę z Wi-Fi \"%s\"%s", s.ssid.c_str(), s.ipcfg.isEmpty() ? "" : " (stały adres)");
   uint32_t start = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - start < WIFI_CONNECT_TIMEOUT_MS) {
     delay(500);
@@ -727,16 +971,18 @@ bool tryWifi(const String& ssid, const String& pass) {
 // Najpierw sieć główna, potem zapasowa; ta, która zadziała, zostaje główną (przy przenoszeniu
 // radia między dwoma miejscami tylko pierwszy start w nowym miejscu czeka na nieudaną próbę).
 bool connectWifi() {
-  String ssid = prefs.getString("ssid", ""), ssid2 = prefs.getString("ssid2", "");
-  if (ssid.isEmpty() && ssid2.isEmpty()) return false;
+  WifiSlot main = loadSlot(0), spare = loadSlot(1);
+  if (main.ssid.isEmpty() && spare.ssid.isEmpty()) return false;
   WiFi.mode(WIFI_STA);
   WiFi.setHostname(HOSTNAME);
-  if (!ssid.isEmpty() && tryWifi(ssid, prefs.getString("pass", ""))) {
-    wifiSsid = ssid;
-  } else if (!ssid2.isEmpty() && tryWifi(ssid2, prefs.getString("pass2", ""))) {
-    wifiSsid = ssid2;
-    wifiFailedSsid = ssid;
-    rememberWifi(ssid2, prefs.getString("pass2", ""));
+  if (!main.ssid.isEmpty() && tryWifi(main)) {
+    wifiSsid = main.ssid;
+    wifiStatic = !main.ipcfg.isEmpty();
+  } else if (!spare.ssid.isEmpty() && tryWifi(spare)) {
+    wifiSsid = spare.ssid;
+    wifiStatic = !spare.ipcfg.isEmpty();
+    wifiFailedSsid = main.ssid;
+    rememberWifi(spare.ssid, spare.pass);
   } else {
     return false;
   }
@@ -931,6 +1177,7 @@ void setup() {
   audio.setOutputSampleRate(Audio::SR_48000);  // kodek skonfigurowany na stałe 48 kHz
   audio.setVolume(volume);
   if (!board::begin()) Serial.println("Błąd inicjalizacji kodeka ES8311 – nie będzie dźwięku");
+  if (!mics::begin()) Serial.println("Błąd inicjalizacji mikrofonów (ES7210 / I2S1)");
   prepareNumberClips();
 
   audioQueue = xQueueCreate(8, sizeof(AudioMsg));
