@@ -31,6 +31,7 @@ volatile State st = State::Idle;
 std::vector<Release> releases;
 String error;
 String lastResult;  // wynik poprzedniej aktualizacji, pokazywany na stronie
+bool lastOk = true;
 Release target;
 volatile size_t written = 0;
 bool waitForAudio = false;
@@ -229,11 +230,18 @@ void begin() {
   p.begin("ota", false);
   String from = p.getString("from", ""), to = p.getString("to", "");
   if (!to.isEmpty()) {
-    lastResult = to == FW_VERSION ? "Zaktualizowano z " + from + " do " + to + "."
-                                  : "Wersja " + to + " nie uruchomiła się poprawnie, radio wróciło do " + FW_VERSION + ".";
+    lastOk = to == FW_VERSION;
+    int cmp = compareVersions(to, from);
+    lastResult = !lastOk  ? "Wersja " + to + " nie uruchomiła się poprawnie, radio wróciło do " + FW_VERSION + "."
+                 : cmp < 0 ? "Przywrócono starszą wersję " + to + " (była " + from + ")."
+                 : cmp > 0 ? "Zaktualizowano z " + from + " do " + to + "."
+                           : "Zmieniono wersję z " + from + " na " + to + ".";
     Serial.printf("OTA: %s\n", lastResult.c_str());
-    p.remove("from");
-    p.remove("to");
+    // Niepotwierdzona wersja zostawia wpis: jeśli bootloader ją wycofa, poprzednia pokaże, co się stało.
+    if (!pendingVerify) {
+      p.remove("from");
+      p.remove("to");
+    }
   }
   p.end();
   Serial.printf("Partycja %s%s\n", running ? running->label : "?", pendingVerify ? ", nowa wersja czeka na potwierdzenie" : "");
@@ -246,6 +254,11 @@ void tick(bool online) {
   if (!pendingVerify || !online || millis() < VERIFY_AFTER_MS) return;
   pendingVerify = false;
   esp_ota_mark_app_valid_cancel_rollback();
+  Preferences p;
+  p.begin("ota", false);
+  p.remove("from");
+  p.remove("to");
+  p.end();
   Serial.println("OTA: nowa wersja działa, potwierdzona");
 }
 
@@ -286,7 +299,7 @@ String statusJson() {
   State s = st;
   String json = String("{\"version\":\"") + jsonEscape(FW_VERSION) + "\",\"state\":\"" + NAMES[(int)s] + "\"";
   json += ",\"pending\":" + String(pendingVerify ? "true" : "false");
-  json += ",\"last\":\"" + jsonEscape(lastResult) + "\"";
+  json += ",\"last\":\"" + jsonEscape(lastResult) + "\",\"lastOk\":" + (lastOk ? "true" : "false");
   if (s == State::Error) json += ",\"error\":\"" + jsonEscape(error) + "\"";
   if (s == State::Installing || s == State::Restarting)
     json += ",\"target\":\"" + jsonEscape(target.version) + "\",\"done\":" + String(written) + ",\"size\":" + String(target.size);

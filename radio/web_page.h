@@ -423,7 +423,7 @@ body.ap nav,body.ap .sta{display:none}
   <div class="card">
     <h2>Aktualizacje</h2>
     <p id="otaCur"></p>
-    <p class="warn" id="otaLast" hidden></p>
+    <p id="otaLast" hidden></p>
     <div class="row"><button id="otaCheck" class="primary">Sprawdź dostępne wersje</button></div>
     <p class="muted" id="otaMsg"></p>
     <div class="bar buf" id="otaBar" hidden><i></i></div>
@@ -823,7 +823,7 @@ async function otaStatus(){
 function renderOta(o){
   const busy=['checking','installing','restarting'].includes(o.state);
   $('otaCur').textContent=`Zainstalowana wersja: ${o.version}`+(o.pending?' (nowa; zostanie na stałe po 30 s pracy z Wi-Fi)':'');
-  $('otaLast').hidden=!o.last;$('otaLast').textContent=o.last;
+  $('otaLast').hidden=!o.last;$('otaLast').textContent=o.last;$('otaLast').className=o.lastOk?'muted':'warn';
   $('otaCheck').disabled=busy;
   $('otaBar').hidden=!o.size;
   if(o.size)$('otaBar').firstChild.style.clipPath=`inset(0 ${(100-100*o.done/o.size).toFixed(1)}% 0 0)`;
@@ -836,7 +836,7 @@ function renderOta(o){
   o.releases.forEach(r=>{
     const li=document.createElement('li'),n=document.createElement('span'),sm=document.createElement('small');
     n.className='url';n.textContent=r.v;
-    sm.textContent=[r.latest&&'najnowsza',r.cmp===0?'zainstalowana':r.cmp>0?'nowsza':r.cmp<0?'starsza':'',kb(r.size)].filter(Boolean).join(' · ');
+    sm.textContent=[r.latest&&'najnowsze wydanie',r.cmp===0?'zainstalowana':r.cmp>0?'nowsza':r.cmp<0?'starsza':'',kb(r.size)].filter(Boolean).join(' · ');
     n.append(sm);li.append(n);
     if(r.cmp!==0){
       const b=document.createElement('button');b.textContent=r.cmp<0?'Przywróć':'Zainstaluj';
