@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 172" width="560" height="172" role="img" aria-label="Smart spiker radio under a night sky">
+  <style>
+    .tw{animation:tw 4s ease-in-out infinite}
+    @keyframes tw{0%,100%{opacity:.25}50%{opacity:1}}
+    .wv{animation:wv 2.4s ease-out infinite;opacity:0}
+    .wv:nth-of-type(2){animation-delay:.4s}.wv:nth-of-type(3){animation-delay:.8s}
+    @keyframes wv{0%{opacity:0}25%{opacity:.95}100%{opacity:0}}
+    .note{opacity:0;animation:note 3.2s ease-out infinite}
+    .note+.note{animation-delay:1.6s}
+    @keyframes note{0%{opacity:0;transform:translate(0,6px)}20%{opacity:1}100%{opacity:0;transform:translate(10px,-34px) rotate(12deg)}}
+    .cone{transform-box:fill-box;transform-origin:center;animation:thump .42s ease-in-out infinite alternate}
+    @keyframes thump{to{transform:scale(1.3)}}
+    #ringHue{animation:hue 6s linear infinite}
+    @keyframes hue{to{filter:hue-rotate(360deg)}}
+    .led{animation:spin 2.4s ease-in-out infinite;animation-delay:calc(var(--i) * -.343s)}
+    @keyframes spin{0%{opacity:1}65%,100%{opacity:.08}}
+    @media (prefers-reduced-motion:reduce){*{animation:none!important;opacity:1}}
+  </style>
+  <defs>
+  <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#070b1f"/><stop offset=".62" stop-color="#131c46"/><stop offset="1" stop-color="#24306b"/></linearGradient>
+    <linearGradient id="wood" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c2531a"/><stop offset=".55" stop-color="#93360f"/><stop offset="1" stop-color="#5f2109"/></linearGradient>
+    <linearGradient id="brass" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fde68a"/><stop offset="1" stop-color="#a16207"/></linearGradient>
+    <radialGradient id="grille"><stop offset="0" stop-color="#2b2420"/><stop offset="1" stop-color="#0c0a09"/></radialGradient>
+    <filter id="glow" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="2.6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <filter id="soft" x="-20%" y="-50%" width="140%" height="200%"><feGaussianBlur stdDeviation="1.1" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <mask id="moonCut"><rect width="560" height="172" fill="#fff"/><circle cx="80" cy="33" r="15" fill="#000"/></mask>
+    <clipPath id="dispClip"><rect x="288" y="79" width="104" height="31"/></clipPath>
+  </defs>
+  <rect width="560" height="172" rx="14" fill="url(#sky)"/>
+  <g fill="#fff">
+    <circle cx="28" cy="22" r="1.1" class="tw"/><circle cx="118" cy="16" r="1.3" class="tw" style="animation-delay:-1.3s"/>
+    <circle cx="40" cy="78" r=".9"/><circle cx="104" cy="66" r="1.2" class="tw" style="animation-delay:-2.1s"/>
+    <circle cx="16" cy="128" r="1"/><circle cx="62" cy="112" r="1.4" class="tw" style="animation-delay:-.6s"/>
+    <circle cx="186" cy="18" r="1"/><circle cx="246" cy="30" r="1.2" class="tw" style="animation-delay:-3s"/>
+    <circle cx="318" cy="14" r="1.1" class="tw" style="animation-delay:-1.8s"/><circle cx="372" cy="34" r=".9"/>
+    <circle cx="502" cy="20" r="1.3" class="tw" style="animation-delay:-2.6s"/><circle cx="540" cy="58" r="1"/>
+    <circle cx="512" cy="102" r="1.2" class="tw" style="animation-delay:-.9s"/><circle cx="546" cy="140" r=".9"/>
+    <circle cx="478" cy="132" r="1.1"/>
+  </g>
+  <circle cx="70" cy="40" r="16" fill="#fef3c7" mask="url(#moonCut)" filter="url(#soft)"/>
+  <ellipse cx="280" cy="165" rx="150" ry="5" fill="#000" opacity=".35"/>
+
+  <!-- fale radiowe z anteny -->
+  <g fill="none" stroke="#93c5fd" stroke-width="2.5" stroke-linecap="round">
+    <path class="wv" d="M453.7 12.8A12 12 0 0 1 455.2 29.7"/>
+    <path class="wv" d="M460.1 5.2A22 22 0 0 1 462.9 36.1"/>
+    <path class="wv" d="M466.6 -2.5A32 32 0 0 1 470.5 42.6"/>
+  </g>
+  <rect x="385" y="49" width="14" height="7" rx="2" fill="#44403c"/>
+  <path d="M392 52 446 22" stroke="#a8a29e" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="446" cy="22" r="4" fill="#fb7185" filter="url(#glow)"/>
+
+  <!-- obudowa -->
+  <rect x="170" y="156" width="26" height="10" rx="3" fill="#3b1606"/>
+  <rect x="364" y="156" width="26" height="10" rx="3" fill="#3b1606"/>
+  <rect x="140" y="54" width="280" height="106" rx="20" fill="url(#wood)"/>
+  <g fill="none" stroke="#fff" stroke-opacity=".07" stroke-width="1.2">
+    <path d="M150 60q70-5 130 0t130 0"/><path d="M146 154q80 4 140 0t126 0"/><path d="M144 104q4 20 2 44"/><path d="M416 70q3 30 0 60"/>
+  </g>
+  <rect x="140.5" y="54.5" width="279" height="105" rx="19.5" fill="none" stroke="#fff" stroke-opacity=".14"/>
+  <rect x="152" y="66" width="256" height="84" rx="12" fill="#17110d"/>
+
+  <!-- głośnik z pierścieniem diod -->
+  <circle cx="200" cy="108" r="35" fill="none" stroke="#241b16" stroke-width="11"/>
+  <circle cx="200" cy="108" r="28" fill="url(#grille)"/>
+  <g fill="none" stroke="#3f3631" stroke-width="1.2"><circle cx="200" cy="108" r="22"/><circle cx="200" cy="108" r="16"/><circle cx="200" cy="108" r="10.5"/></g>
+  <circle class="cone" cx="200" cy="108" r="6" fill="#4a403a"/>
+  <g id="ringHue"><g filter="url(#glow)"><g id="ring">
+    <circle class="led" fill="#ef4444" style="--i:0;--r:0" cx="200" cy="73" r="4.2"/>
+    <circle class="led" fill="#f97316" style="--i:1;--r:.57" cx="227.4" cy="86.2" r="4.2"/>
+    <circle class="led" fill="#facc15" style="--i:2;--r:.29" cx="234.1" cy="115.8" r="4.2"/>
+    <circle class="led" fill="#22c55e" style="--i:3;--r:.86" cx="215.2" cy="139.5" r="4.2"/>
+    <circle class="led" fill="#06b6d4" style="--i:4;--r:.14" cx="184.8" cy="139.5" r="4.2"/>
+    <circle class="led" fill="#3b82f6" style="--i:5;--r:.71" cx="165.9" cy="115.8" r="4.2"/>
+    <circle class="led" fill="#a855f7" style="--i:6;--r:.43" cx="172.6" cy="86.2" r="4.2"/>
+  </g></g></g>
+
+  <!-- wyświetlacz ze skalą -->
+  <rect x="250" y="74" width="146" height="46" rx="6" fill="#03171b" stroke="#0f3d44"/>
+  <g fill="#5eead4" font-family="ui-monospace,Menlo,Consolas,monospace" filter="url(#soft)">
+    <text id="hNum" x="270" y="103" text-anchor="middle" font-size="22" font-weight="700">07</text>
+    <g clip-path="url(#dispClip)"><text id="hName" x="290" y="93" font-size="11">INTERNET RADIO</text></g>
+    <text id="hState" x="290" y="106" font-size="8" fill-opacity=".75">▶ GRA · VOL 9</text>
+  </g>
+  <path d="M256 117v-4M264 117v-2M272 117v-2M280 117v-2M288 117v-4M296 117v-2M304 117v-2M312 117v-2M320 117v-4M328 117v-2M336 117v-2M344 117v-2M352 117v-4M360 117v-2M368 117v-2M376 117v-2M384 117v-4M390 117v-2" stroke="#2dd4bf" stroke-opacity=".45"/>
+  <rect id="needle" x="295" y="110" width="2" height="9" rx="1" fill="#fb7185" filter="url(#soft)"/>
+
+  <!-- gałki i tabliczka -->
+  <circle cx="266" cy="135" r="9.5" fill="url(#brass)" stroke="#713f12"/>
+  <path id="knobSt" transform="rotate(-54 266 135)" d="M266 135v-7" stroke="#451a03" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="380" cy="135" r="9.5" fill="url(#brass)" stroke="#713f12"/>
+  <path id="knobVol" transform="rotate(-19 380 135)" d="M380 135v-7" stroke="#451a03" stroke-width="2" stroke-linecap="round"/>
+  <text x="323" y="138" text-anchor="middle" font-family="system-ui,sans-serif" font-size="8" font-weight="700" letter-spacing="1.6" fill="#e7b35a">SMART SPIKER</text>
+
+  <!-- nutki, gdy gra -->
+  <g fill="#fcd34d">
+    <g class="note"><g transform="translate(176 50)"><ellipse rx="4.2" ry="3.2" transform="rotate(-20)"/><path d="M3.6-1V-17q5 2 6.5 7" fill="none" stroke="#fcd34d" stroke-width="1.6"/></g></g>
+    <g class="note"><g transform="translate(226 46)"><ellipse rx="4.2" ry="3.2" transform="rotate(-20)"/><path d="M3.6-1V-17q5 2 6.5 7" fill="none" stroke="#fcd34d" stroke-width="1.6"/></g></g>
+  </g>
+</svg>

@@ -1,5 +1,7 @@
 # waveshare-s3-audio-radio
 
+<p align="center"><img src="docs/img/radio-hero.svg" alt="Animated drawing of the radio from the web interface: a wooden radio under a night sky with a glowing LED ring around the speaker" width="100%"></p>
+
 Internet radio and other projects for the **Waveshare ESP32-S3-AUDIO-Board** (SKU 32184, sold as "AI Smart Speaker"): ESP32-S3R8, ES8311 speaker codec, ES7210 microphone array, 7 RGB LEDs, three buttons.
 
 > The web interface, code comments and docs are in Polish. Interfejs, komentarze i dokumentacja są po polsku.
