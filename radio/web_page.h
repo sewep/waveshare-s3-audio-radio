@@ -399,7 +399,7 @@ body.ap nav,body.ap .sta{display:none}
   <div class="card">
     <h2>Zapamiętane sieci</h2>
     <ul id="saved"></ul>
-    <p class="muted">Radio pamięta dwie sieci. Przy starcie łączy się z ostatnio używaną, a gdy ta nie odpowiada, z drugą. Dzięki temu pomyłka w haśle nowej sieci nie odcina radia od internetu.</p>
+    <p class="muted">Radio pamięta do 8 sieci, ostatnio używana jest na górze. Przy starcie łączy się wprost z ostatnio używaną. Gdy ta nie odpowiada albo ma słaby sygnał, radio szuka sieci w zasięgu i wybiera tę z najlepszym sygnałem; ostatnio używana wygrywa, dopóki inna nie jest mocniejsza o 8 dB. Gdy w pracy sygnał przez dłuższy czas jest bardzo słaby, a muzyka się rwie, radio samo przechodzi na zapamiętaną sieć mocniejszą o 10 dB. Siła sygnału pochodzi z ostatniego szukania sieci.</p>
   </div>
   <div class="card">
     <h2>Połącz z siecią</h2>
@@ -409,8 +409,9 @@ body.ap nav,body.ap .sta{display:none}
       <input type="text" id="ssidIn" placeholder="Nazwa sieci (SSID)" maxlength="32" required autocapitalize="off" autocorrect="off" spellcheck="false">
       <div class="pw"><input type="password" id="passIn" placeholder="Hasło" maxlength="64" autocomplete="current-password"><button type="button" id="showPw">Pokaż</button></div>
       <p class="muted" id="passHint" hidden></p>
+      <label class="row"><input type="checkbox" id="hiddenIn"> Sieć ukryta (nie ogłasza nazwy)</label>
       <button class="primary">Zapisz i połącz</button>
-      <p class="muted">Radio uruchomi się ponownie i połączy z tą siecią. Jeśli nie odpowie, wróci do poprzedniej. Sieć ukrytą wpisz ręcznie.</p>
+      <p class="muted">Radio uruchomi się ponownie i spróbuje najpierw tej sieci. Jeśli nie odpowie, połączy się z inną zapamiętaną. Sieć ukrytą wpisz ręcznie i zaznacz pole wyżej: radio spróbuje jej także wtedy, gdy jej nie widzi.</p>
     </form>
   </div>
   <div class="card" id="wifiDone" hidden>
@@ -705,7 +706,8 @@ function render(){
   }
 
   const rssi=st.rssi!==undefined?`${st.rssi} dBm`+['',' (słaby)',' (średni)',' (dobry)',' (bardzo dobry)'][signal(st.rssi)]:'—';
-  tableRows('wifiNow',[['Sieć',st.ssid||'—'],['Sygnał',rssi,st.rssi!==undefined?bars(st.rssi):''],['IP',st.ip||'—'],['Adres',st.host?`http://${st.host}`:'—']]);
+  tableRows('wifiNow',[['Sieć',st.ssid||'—'],['Sygnał',rssi,st.rssi!==undefined?bars(st.rssi):''],...(wifi.choice?[['Dlaczego ta',wifi.choice]]:[]),
+    ['IP',st.ip||'—'],['Adres',st.host?`http://${st.host}`:'—']]);
   renderHero();
 }
 
@@ -872,18 +874,20 @@ let ipTouched=false;
 function renderWifi(){
   const ul=$('saved');ul.innerHTML='';
   if(!wifi.saved.length)ul.innerHTML='<li class="muted">Brak zapamiętanych sieci.</li>';
-  wifi.saved.forEach(({ssid:s,ip},i)=>{
+  wifi.saved.forEach(({ssid:s,ip,hidden,rssi,used})=>{
     const li=document.createElement('li');
+    if(rssi)li.innerHTML=bars(rssi);
     const n=document.createElement('div');n.className='url';n.textContent=s;n.style.cursor='pointer';n.onclick=()=>pick(s);
-    const sm=document.createElement('small');sm.textContent=ip?`stały adres ${ip.split(' ')[0]}`:'adres z DHCP';n.append(sm);
-    const b=document.createElement('span');b.className='badge'+(s===wifi.connected?' on':'');
-    b.textContent=s===wifi.connected?'połączona':i===0?'główna':'zapasowa';
+    const sm=document.createElement('small');
+    sm.textContent=[rssi?`w zasięgu, ${rssi} dBm`:wifi.scanned&&!hidden?'poza zasięgiem':'',hidden&&'ukryta',
+      ip?`stały adres ${ip.split(' ')[0]}`:'DHCP',used&&'ostatnio '+new Date(used*1000).toLocaleDateString('pl-PL')].filter(Boolean).join(' · ');
+    n.append(sm);
     li.append(n);
     if(ip&&s!==wifi.connected){  // np. w hotspocie po nieudanej zmianie adresu
       const r=document.createElement('button');r.className='small';r.textContent='DHCP';r.title='Przywróć automatyczny adres';
       r.onclick=()=>post('/api/wifi/ip',{ssid:s,mode:'dhcp'}).then(wifiInfo);li.append(r);
     }
-    li.append(b);
+    if(s===wifi.connected){const b=document.createElement('span');b.className='badge on';b.textContent='połączona';li.append(b)}
     if(s!==wifi.connected){
       const d=document.createElement('button');d.className='del';d.textContent='✕';d.title='Zapomnij';
       d.onclick=()=>{if(confirm(`Zapomnieć sieć „${s}”?`))post('/api/wifi/forget',{ssid:s}).then(wifiInfo)};
@@ -893,7 +897,7 @@ function renderWifi(){
   });
   renderIp();
   $('wifiWarn').hidden=!wifi.failed;
-  $('wifiWarn').textContent=`Nie udało się połączyć z „${wifi.failed}”, więc radio wróciło do „${wifi.connected}”. Sprawdź nazwę sieci i hasło.`;
+  $('wifiWarn').textContent=`Sieć „${wifi.failed}” była w zasięgu, ale radio nie połączyło się z nią, więc wybrało „${wifi.connected}”. Sprawdź hasło tej sieci.`;
   const list=savedNames().map(s=>`„${s}”`).join(' ani ');
   $('apReason').textContent={
     button:'Tryb konfiguracji włączyło przytrzymanie BOOT. Zapamiętane sieci zostały: możesz dodać nową albo wrócić bez zmian (to samo robi ponowne przytrzymanie BOOT).',
@@ -909,7 +913,7 @@ function passHint(){
   h.textContent=openNets.has(s)?'Sieć otwarta, bez hasła.':savedNames().includes(s)?'Zostaw hasło puste, żeby zachować zapamiętane.':'';
   h.hidden=!h.textContent;
 }
-function pick(ssid){$('ssidIn').value=ssid;$('passIn').value='';passHint();
+function pick(ssid){$('ssidIn').value=ssid;$('passIn').value='';$('hiddenIn').checked=!!(wifi.saved.find(s=>s.ssid===ssid)||{}).hidden;passHint();
   document.querySelectorAll('#nets li').forEach(li=>li.classList.toggle('on',li.dataset.ssid===ssid));$('passIn').focus()}
 
 async function scan(){
@@ -917,7 +921,7 @@ async function scan(){
   try{
     for(let k=0;k<25;k++){
       const r=await (await fetch('/api/scan',{cache:'no-store'})).json();
-      if(Array.isArray(r)){showNets(r);break}
+      if(Array.isArray(r)){showNets(r);wifiInfo();break}
       await new Promise(f=>setTimeout(f,700));
     }
   }catch(e){}
@@ -984,7 +988,7 @@ $('ssidIn').oninput=passHint;
 $('showPw').onclick=()=>{const p=$('passIn'),show=p.type==='password';p.type=show?'text':'password';$('showPw').textContent=show?'Ukryj':'Pokaż'};
 $('wifiForm').onsubmit=async e=>{
   e.preventDefault();
-  const ssid=$('ssidIn').value,pass=$('passIn').value,d={ssid,pass};
+  const ssid=$('ssidIn').value,pass=$('passIn').value,d={ssid,pass,hidden:$('hiddenIn').checked?1:0};
   if(!pass&&!openNets.has(ssid)){
     if(savedNames().includes(ssid))d.keep=1;
     else if(!confirm(`Połączyć z siecią „${ssid}” bez hasła?`))return;
@@ -1034,7 +1038,8 @@ async function diag(){
   $('dBuf').querySelector('i').style.clipPath=`inset(0 ${100-(S.bufSize?S.buf/S.bufSize*100:0)}% 0 0)`;
   $('dBufV').textContent=S.bufSize?`${kb(S.buf)}`+(on&&sec?`, ${sec.toFixed(0)} s`:''):'—';
   const q=['',' (słaby)',' (średni)',' (dobry)',' (bardzo dobry)'][signal(W.rssi)];
-  tableRows('dWifi',[['Sieć',W.ssid||'—'],['Sygnał',`${W.rssi} dBm${q}`,bars(W.rssi)],['Kanał',String(W.channel)],['Punkt dostępu',W.bssid],
+  tableRows('dWifi',[['Sieć',W.ssid||'—'],['Sygnał',`${W.rssi} dBm${q}`+(W.rssiAvg?`, średnio ${W.rssiAvg} dBm z 30 s`:''),bars(W.rssi)],
+    ['Wybór sieci',W.choice||'—'],['Łączenie przy starcie',(W.connectMs/1000).toFixed(1).replace('.',',')+' s'],['Kanał',String(W.channel)],['Punkt dostępu',W.bssid],
     ['IP',`${W.ip} (${W.static?'stały':'DHCP'})`],['Maska',W.mask],['Brama',W.gw],['DNS',W.dns],['MAC',W.mac],['Adres',`http://${W.host}`]]);
   const ms=us=>(us/1000).toFixed(us<10000?1:0).replace('.',',')+' ms';
   tableRows('dPerf',[['Zadanie audio',`najdłuższa przerwa ${ms(Y.audioGap)}, przestoje > 40 ms: ${Y.stalls}`],

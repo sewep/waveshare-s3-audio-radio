@@ -41,13 +41,13 @@
 #include "leds.h"
 #include "mics.h"
 #include "ota.h"
+#include "wifinet.h"
 #include "scare.h"
 #include "station_numbers.h"
 #include "version.h"
 #include "web_page.h"
 
 static const char* HOSTNAME = "radio";
-static const uint32_t WIFI_CONNECT_TIMEOUT_MS = 20000;
 static const uint32_t RECONNECT_DELAY_MS = 5000;
 static const uint32_t ANNOUNCE_STALL_MS = 1500;
 static const uint32_t LOADING_SLOW_MS = 8000;      // dłuższe ładowanie = kłopot (pomarańczowa kometa)
@@ -143,19 +143,9 @@ enum class SetupReason : uint8_t { NoNetwork, ConnectFailed, Button };
 SetupReason setupReason = SetupReason::NoNetwork;
 String wifiSsid;           // sieć, z którą radio jest połączone
 String hotspotSsid;        // nazwa hotspotu w trybie konfiguracji
-String wifiFailedSsid;     // sieć główna, która przy tym starcie nie odpowiedziała (radio wzięło zapasową)
 bool wifiStatic = false;   // bieżąca sieć ma stały adres IP
 uint32_t restartAtMs = 0;  // zaplanowany restart (0 = brak)
 
-// Zapamiętana sieć: 0 = główna (klucze ssid, pass, ipcfg), 1 = zapasowa (ssid2, pass2, ipcfg2).
-// ipcfg = "ip maska brama dns" albo pusty napis (DHCP).
-struct WifiSlot {
-  String ssid, pass, ipcfg;
-};
-
-struct IpConfig {
-  IPAddress ip, mask, gw, dns;
-};
 uint32_t lastStreamOkMs = 0;
 int battery = -1;
 
@@ -1397,6 +1387,7 @@ void handleScan() {
             ",\"lock\":" + (WiFi.encryptionType(i) == WIFI_AUTH_OPEN ? "false" : "true") + "}";
   }
   json += ']';
+  wifinet::noteScan();
   WiFi.scanDelete();
   server.send(200, "application/json", json);
 }
@@ -1405,15 +1396,15 @@ void handleWifiInfo() {
   static const char* REASONS[] = {"none", "failed", "button"};
   String json = String("{\"ap\":") + (apMode ? "true" : "false") + ",\"connected\":\"" +
                 jsonEscape(wifiSsid) + "\",\"saved\":[";
-  bool first = true;
-  for (int i = 0; i < 2; i++) {
-    WifiSlot s = loadSlot(i);
-    if (s.ssid.isEmpty()) continue;
-    if (!first) json += ',';
-    first = false;
-    json += "{\"ssid\":\"" + jsonEscape(s.ssid) + "\",\"ip\":\"" + s.ipcfg + "\"}";
+  const auto& nets = wifinet::networks();
+  for (size_t i = 0; i < nets.size(); i++) {
+    const wifinet::Network& n = nets[i];
+    json += String(i ? "," : "") + "{\"ssid\":\"" + jsonEscape(n.ssid) + "\",\"ip\":\"" + n.ipcfg + "\",\"hidden\":" +
+            (n.hidden ? "true" : "false") + ",\"rssi\":" + wifinet::lastRssi(n.ssid) + ",\"used\":" + n.lastUsed + "}";
   }
-  json += String("],\"failed\":\"") + jsonEscape(wifiFailedSsid) + "\",\"hotspot\":\"" + hotspotSsid +
+  json += String("],\"max\":") + wifinet::MAX_NETWORKS + ",\"scanned\":" + (wifinet::scanned() ? "true" : "false") + ",\"choice\":\"" + jsonEscape(wifinet::lastChoice()) +
+          "\",\"connectMs\":" + wifinet::connectMs() + ",\"rssiAvg\":" + wifinet::averageRssi();
+  json += String(",\"failed\":\"") + jsonEscape(wifinet::lastFailed()) + "\",\"hotspot\":\"" + hotspotSsid +
           "\",\"reason\":\"" + REASONS[(int)setupReason] + "\"";
   if (!apMode) {
     json += String(",\"static\":") + (wifiStatic ? "true" : "false") +
@@ -1427,9 +1418,10 @@ void handleSaveWifi() {
   String ssid = server.arg("ssid");
   String pass = server.arg("pass");
   if (ssid.isEmpty() || ssid.length() > 32) return sendError("podaj nazwe sieci (do 32 znakow)");
-  if (pass.isEmpty() && server.arg("keep") == "1") pass = savedWifiPassword(ssid);
+  if (pass.isEmpty() && server.arg("keep") == "1") pass = wifinet::password(ssid);
   if (!pass.isEmpty() && (pass.length() < 8 || pass.length() > 64)) return sendError("haslo Wi-Fi ma od 8 do 64 znakow");
-  rememberWifi(ssid, pass);
+  String err;
+  if (!wifinet::remember(ssid, pass, server.arg("hidden") == "1", err)) return sendError(err.c_str());
   Serial.printf("Nowa sieć Wi-Fi \"%s\", restart\n", ssid.c_str());
   sendOk();
   restartAtMs = millis() + RESTART_DELAY_MS;
@@ -1438,27 +1430,24 @@ void handleSaveWifi() {
 // Stały adres albo DHCP dla zapamiętanej sieci; dla bieżącej sieci radio od razu się restartuje.
 void handleWifiIp() {
   String ssid = server.arg("ssid");
-  int slot = findSlot(ssid);
-  if (slot < 0) return sendError("nie ma takiej sieci");
-  WifiSlot s = loadSlot(slot);
-  if (server.arg("mode") == "dhcp") {
-    s.ipcfg = "";
-  } else {
+  if (wifinet::find(ssid) < 0) return sendError("nie ma takiej sieci");
+  String ipcfg;
+  if (server.arg("mode") != "dhcp") {
     String dns = server.arg("dns");
     if (dns.isEmpty()) dns = server.arg("gw");
     String cfg = server.arg("ip") + ' ' + server.arg("mask") + ' ' + server.arg("gw") + ' ' + dns;
-    IpConfig c;
-    if (!parseIpConfig(cfg, c)) return sendError("niepoprawny zapis adresu");
-    if (const char* err = checkIpConfig(c)) return sendError(err);
+    wifinet::IpConfig c;
+    if (!wifinet::parseIpConfig(cfg, c)) return sendError("niepoprawny zapis adresu");
+    if (const char* err = wifinet::checkIpConfig(c)) return sendError(err);
     // Adres z innej podsieci odciąłby radio od strony (zostałby tylko hotspot przez BOOT).
     IPAddress here = WiFi.localIP(), mask = WiFi.subnetMask();
     if (ssid == wifiSsid && !apMode)
       for (int i = 0; i < 4; i++)
         if ((c.ip[i] & mask[i]) != (here[i] & mask[i])) return sendError("adres spoza obecnej sieci radia");
-    s.ipcfg = cfg;
+    ipcfg = cfg;
   }
-  storeSlot(slot, s);
-  Serial.printf("Sieć \"%s\": %s\n", ssid.c_str(), s.ipcfg.isEmpty() ? "DHCP" : s.ipcfg.c_str());
+  wifinet::setIpConfig(ssid, ipcfg);
+  Serial.printf("Sieć \"%s\": %s\n", ssid.c_str(), ipcfg.isEmpty() ? "DHCP" : ipcfg.c_str());
   sendOk();
   if (ssid == wifiSsid) restartAtMs = millis() + RESTART_DELAY_MS;
 }
@@ -1499,6 +1488,8 @@ void handleDiag() {
                 jsonField("web", streamInfo(icyUrl)) + jsonField("losses", streamLosses) +
                 jsonField("since", playStartMs && playing ? (long)((millis() - playStartMs) / 1000) : -1L) + "}";
   json += ",\"wifi\":{\"static\":" + String(wifiStatic ? "true" : "false") + jsonField("ssid", wifiSsid) +
+          jsonField("choice", wifinet::lastChoice()) + jsonField("connectMs", (long)wifinet::connectMs()) +
+          jsonField("rssiAvg", (long)wifinet::averageRssi()) +
           jsonField("bssid", WiFi.BSSIDstr()) + jsonField("channel", WiFi.channel()) + jsonField("rssi", WiFi.RSSI()) +
           jsonField("ip", WiFi.localIP().toString()) + jsonField("mask", WiFi.subnetMask().toString()) +
           jsonField("gw", WiFi.gatewayIP().toString()) + jsonField("dns", WiFi.dnsIP().toString()) +
@@ -1531,10 +1522,7 @@ void handleLevels() {
 void handleForgetWifi() {
   String ssid = server.arg("ssid");
   if (ssid == wifiSsid) return sendError("tej sieci radio teraz uzywa");
-  int slot = findSlot(ssid);
-  if (slot < 0) return sendError("nie ma takiej sieci");
-  if (slot == 0) storeSlot(0, loadSlot(1));  // zapasowa zostaje jedyną
-  storeSlot(1, WifiSlot());
+  if (!wifinet::forget(ssid)) return sendError("nie ma takiej sieci");
   sendOk();
 }
 
@@ -1619,10 +1607,6 @@ void setupRoutes() {
 
 // ---------- Wi-Fi ----------
 
-// Dwie zapamiętane sieci (WifiSlot): główna i zapasowa. Zapisywana sieć zostaje główną,
-// a dotychczasowa główna zapasową; stały adres IP zostaje przy swojej sieci.
-static const char* const SLOT_KEYS[2][3] = {{"ssid", "pass", "ipcfg"}, {"ssid2", "pass2", "ipcfg2"}};
-
 // Bez isKey() Preferences loguje błąd przy każdym braku klucza.
 String prefString(const char* key) { return prefs.isKey(key) ? prefs.getString(key) : String(); }
 
@@ -1631,96 +1615,15 @@ void prefPut(const char* key, const String& value) {
   else if (prefs.isKey(key)) prefs.remove(key);
 }
 
-WifiSlot loadSlot(int i) { return {prefString(SLOT_KEYS[i][0]), prefString(SLOT_KEYS[i][1]), prefString(SLOT_KEYS[i][2])}; }
-
-void storeSlot(int i, const WifiSlot& s) {
-  prefPut(SLOT_KEYS[i][0], s.ssid);
-  prefPut(SLOT_KEYS[i][1], s.pass);
-  prefPut(SLOT_KEYS[i][2], s.ipcfg);
-}
-
-int findSlot(const String& ssid) {
-  for (int i = 0; i < 2; i++)
-    if (!ssid.isEmpty() && prefString(SLOT_KEYS[i][0]) == ssid) return i;
-  return -1;
-}
-
-void rememberWifi(const String& ssid, const String& pass) {
-  WifiSlot main = loadSlot(0), spare = loadSlot(1);
-  WifiSlot next{ssid, pass, ""};
-  int known = findSlot(ssid);
-  if (known >= 0) next.ipcfg = loadSlot(known).ipcfg;
-  if (main.ssid != ssid) {
-    if (!main.ssid.isEmpty()) spare = main;
-    else if (spare.ssid == ssid) spare = WifiSlot();
-  }
-  storeSlot(0, next);
-  storeSlot(1, spare);
-}
-
-String savedWifiPassword(const String& ssid) {
-  int slot = findSlot(ssid);
-  return slot < 0 ? String() : loadSlot(slot).pass;
-}
-
-bool hasSavedWifi() { return !prefString("ssid").isEmpty() || !prefString("ssid2").isEmpty(); }
-
-bool parseIpConfig(const String& s, IpConfig& c) {
-  int a = s.indexOf(' '), b = s.indexOf(' ', a + 1), d = s.indexOf(' ', b + 1);
-  if (a < 0 || b < 0 || d < 0) return false;
-  return c.ip.fromString(s.substring(0, a)) && c.mask.fromString(s.substring(a + 1, b)) &&
-         c.gw.fromString(s.substring(b + 1, d)) && c.dns.fromString(s.substring(d + 1));
-}
-
-// nullptr = adres pasuje do maski i bramy.
-const char* checkIpConfig(const IpConfig& c) {
-  auto u = [](const IPAddress& a) { return (uint32_t)a[0] << 24 | a[1] << 16 | a[2] << 8 | a[3]; };
-  uint32_t mask = u(c.mask), ip = u(c.ip);
-  if (mask == 0 || (~mask & (~mask + 1)) != 0) return "niepoprawna maska";
-  if ((ip & mask) != (u(c.gw) & mask)) return "brama spoza sieci tego adresu";
-  if ((ip & ~mask) == 0 || (ip & ~mask) == ~mask) return "to adres sieci albo rozgloszeniowy";
-  if (ip == u(c.gw)) return "adres taki sam jak brama";
-  if (u(c.dns) == 0) return "niepoprawny DNS";
-  return nullptr;
-}
-
-bool tryWifi(const WifiSlot& s) {
-  IpConfig c;
-  if (parseIpConfig(s.ipcfg, c)) WiFi.config(c.ip, c.gw, c.mask, c.dns);
-  else WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE);  // DHCP
-  WiFi.begin(s.ssid.c_str(), s.pass.c_str());
-  Serial.printf("Łączę z Wi-Fi \"%s\"%s", s.ssid.c_str(), s.ipcfg.isEmpty() ? "" : " (stały adres)");
-  uint32_t start = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - start < WIFI_CONNECT_TIMEOUT_MS) {
-    delay(500);
-    Serial.print('.');
-  }
-  Serial.println();
-  if (WiFi.status() == WL_CONNECTED) return true;
-  WiFi.disconnect();
-  return false;
-}
-
-// Najpierw sieć główna, potem zapasowa; ta, która zadziała, zostaje główną (przy przenoszeniu
-// radia między dwoma miejscami tylko pierwszy start w nowym miejscu czeka na nieudaną próbę).
+// Lista sieci i wybór przy starcie: wifinet.cpp. Tu tylko tryb, nazwa hosta i zapamiętanie wyniku.
 bool connectWifi() {
-  WifiSlot main = loadSlot(0), spare = loadSlot(1);
-  if (main.ssid.isEmpty() && spare.ssid.isEmpty()) return false;
+  if (wifinet::empty()) return false;
   WiFi.mode(WIFI_STA);
   WiFi.setHostname(HOSTNAME);
-  if (!main.ssid.isEmpty() && tryWifi(main)) {
-    wifiSsid = main.ssid;
-    wifiStatic = !main.ipcfg.isEmpty();
-  } else if (!spare.ssid.isEmpty() && tryWifi(spare)) {
-    wifiSsid = spare.ssid;
-    wifiStatic = !spare.ipcfg.isEmpty();
-    wifiFailedSsid = main.ssid;
-    rememberWifi(spare.ssid, spare.pass);
-  } else {
-    return false;
-  }
   WiFi.setSleep(false);  // płynniejszy strumień
-  WiFi.setAutoReconnect(true);
+  if (!wifinet::connect()) return false;
+  wifiSsid = wifinet::connectedSsid();
+  wifiStatic = wifinet::connectedStatic();
   return true;
 }
 
@@ -1749,7 +1652,7 @@ void checkSetupIdle() {
   if (!apMode || now - lastCheck < 1000) return;
   lastCheck = now;
   if (lastGuestMs == 0 || WiFi.softAPgetStationNum() > 0) lastGuestMs = now;
-  else if (now - lastGuestMs > SETUP_IDLE_RESTART_MS && hasSavedWifi()) {
+  else if (now - lastGuestMs > SETUP_IDLE_RESTART_MS && !wifinet::empty()) {
     Serial.println("Nikt nie konfiguruje Wi-Fi – ponawiam łączenie z zapisaną siecią");
     ESP.restart();
   }
@@ -1960,6 +1863,7 @@ void setup() {
 
   prefs.begin("radio", false);
   ota::begin();
+  wifinet::begin();
   fsReady = FFat.begin(true);
   loadStations();
   currentStation = constrain(prefs.getInt("station", 0), 0, (int)stations.size() - 1);
@@ -2021,7 +1925,7 @@ void setup() {
     if (resume) play(currentStation);
   } else {
     startAccessPoint(setupOnce        ? SetupReason::Button
-                     : hasSavedWifi() ? SetupReason::ConnectFailed
+                     : !wifinet::empty() ? SetupReason::ConnectFailed
                                       : SetupReason::NoNetwork);
     setupRoutes();
   }
@@ -2044,6 +1948,11 @@ void loop() {
   tickSleep();
   tickScare();
   ota::tick(!apMode && WiFi.isConnected());
+  bool streamBad = streamTrouble || (slowStreamMs && millis() - slowStreamMs < 60000);
+  if (!apMode && !ota::busy() && !restartAtMs && wifinet::tick(playing, streamBad)) {
+    // Stan „gra” zostaje zapisany, więc po restarcie z lepszą siecią radio gra dalej.
+    restartAtMs = millis() + 300;
+  }
   resumeAfterOta();
   updateLeds();
   mainLoopTime.add(micros() - t0);

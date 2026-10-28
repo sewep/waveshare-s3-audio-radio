@@ -27,7 +27,7 @@ Internet radio and other projects for the **Waveshare ESP32-S3-AUDIO-Board** (SK
 - Sleep timer, tone control (bass / mid / treble), recently played titles
 - Clap twice to play or stop. The detector subtracts the speaker's own output, because the speaker sits on the same board as the microphones
 - More than 20 LED effects, including a music visualizer and FFT spectrum
-- Two remembered Wi-Fi networks with optional static IP; setup hotspot `Radio-XXXX` at `http://192.168.4.1`
+- Up to 8 remembered Wi-Fi networks, each with optional static IP. The radio connects straight to the last one used and scans only when that fails, picking the known network with the best signal. If the signal stays very weak while the music keeps breaking up, it moves to a stronger known network. Setup hotspot `Radio-XXXX` at `http://192.168.4.1`
 - Updates over Wi-Fi from GitHub releases (Status tab), including going back to an earlier version
 - Halloween mode: hide the board in a mask, and when someone speaks nearby it plays a scream, with the LEDs glowing like eyes in time with the sound
 - Buttons work like Bluetooth headphones: Key1 / Key3 change the volume, hold them to change the station, Key2 is play/stop
