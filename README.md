@@ -74,6 +74,8 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
+You can also release from GitHub: **Actions → Wydanie radia → Run workflow**, enter the version (for example `1.3.0`) and the workflow creates the tag and the release on the chosen commit. A full release needs the `main` branch; with the field empty, the run only builds the files and keeps them as a workflow artifact. Don't use **Draft a new release** on the Releases page: it creates the tag without the firmware files, and the workflow it triggers then fails.
+
 ## Building xiaozhi in Polish
 
 Requires ESP-IDF ≥ 6.0.1 (tested with 6.1 in `C:\esp\esp-idf-v6.1`).
