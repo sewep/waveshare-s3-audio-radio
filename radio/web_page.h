@@ -421,6 +421,16 @@ body.ap nav,body.ap .sta{display:none}
 
 <section data-tab="stan">
   <div class="card">
+    <h2>Aktualizacje</h2>
+    <p id="otaCur"></p>
+    <p class="warn" id="otaLast" hidden></p>
+    <div class="row"><button id="otaCheck" class="primary">Sprawdź dostępne wersje</button></div>
+    <p class="muted" id="otaMsg"></p>
+    <div class="bar buf" id="otaBar" hidden><i></i></div>
+    <ul id="otaList"></ul>
+    <p class="muted">Wersje pochodzą z wydań projektu na GitHubie. Lista pokazuje tylko wersje, które same umieją się aktualizować, więc powrót do starszej nie odetnie radia od nowych wydań. Na czas sprawdzania i instalacji radio milknie. Po instalacji uruchamia się ponownie; jeśli nowa wersja nie połączy się z Wi-Fi w ciągu 30 s pracy, przy następnym starcie radio wraca do poprzedniej.</p>
+  </div>
+  <div class="card">
     <h2>Poziomy dźwięku</h2>
     <div class="meter"><span>Głośnik</span><div class="bar" id="lvOut"><i></i><b></b></div><span class="db" id="lvOutV">—</span></div>
     <div class="meter"><span>Mikrofon 1</span><div class="bar" id="lvMic0"><i></i><b></b></div><span class="db" id="lvMic0V">—</span></div>
@@ -801,6 +811,57 @@ $('hwUpBtn').onclick=async()=>{
   try{const r=await (await fetch('/api/hw/upload',{method:'POST',body:fd})).json();if(r.error)alert('Nie wgrano: '+r.error)}catch(e){alert('Nie wgrano pliku.')}
   $('hwUpBtn').disabled=false;$('hwUp').value='';status()};
 
+// ---------- aktualizacje ----------
+
+let otaTimer=0,otaWaiting=false;
+async function otaStatus(){
+  let o;try{o=await (await fetch('/api/ota',{cache:'no-store'})).json()}catch(e){return}
+  renderOta(o);clearTimeout(otaTimer);
+  if(o.state==='checking'||o.state==='installing')otaTimer=setTimeout(otaStatus,700);
+  else if(o.state==='restarting')otaWaitRestart();
+}
+function renderOta(o){
+  const busy=['checking','installing','restarting'].includes(o.state);
+  $('otaCur').textContent=`Zainstalowana wersja: ${o.version}`+(o.pending?' (nowa; zostanie na stałe po 30 s pracy z Wi-Fi)':'');
+  $('otaLast').hidden=!o.last;$('otaLast').textContent=o.last;
+  $('otaCheck').disabled=busy;
+  $('otaBar').hidden=!o.size;
+  if(o.size)$('otaBar').firstChild.style.clipPath=`inset(0 ${(100-100*o.done/o.size).toFixed(1)}% 0 0)`;
+  $('otaMsg').textContent=o.state==='checking'?'Sprawdzam wydania na GitHubie…'
+    :o.state==='installing'?`Pobieram i zapisuję wersję ${o.target}: ${kb(o.done)} z ${kb(o.size)}.`
+    :o.state==='restarting'?`Wersja ${o.target} wgrana. Radio uruchamia się ponownie…`
+    :o.state==='error'?'Nie udało się: '+o.error
+    :o.state==='checked'?(o.releases.some(r=>r.cmp>0)?'Jest nowsza wersja.':'Masz najnowszą wersję.'):'';
+  const ul=$('otaList');ul.innerHTML='';
+  o.releases.forEach(r=>{
+    const li=document.createElement('li'),n=document.createElement('span'),sm=document.createElement('small');
+    n.className='url';n.textContent=r.v;
+    sm.textContent=[r.latest&&'najnowsza',r.cmp===0?'zainstalowana':r.cmp>0?'nowsza':r.cmp<0?'starsza':'',kb(r.size)].filter(Boolean).join(' · ');
+    n.append(sm);li.append(n);
+    if(r.cmp!==0){
+      const b=document.createElement('button');b.textContent=r.cmp<0?'Przywróć':'Zainstaluj';
+      if(r.cmp>0)b.className='primary';b.disabled=busy;b.onclick=()=>otaInstall(r.v,r.cmp<0);li.append(b)}
+    ul.append(li)});
+}
+async function otaInstall(v,older){
+  if(!confirm(`Zainstalować wersję ${v}?${older?' To starsza wersja niż obecna.':''} Radio zamilknie na ok. minutę i uruchomi się ponownie.`))return;
+  const r=await (await post('/api/ota/install',{v})).json();
+  if(r.error)alert('Nie da się: '+r.error);
+  otaStatus();
+}
+// Po restarcie strona wczytuje się od nowa, bo nowa wersja może mieć inną stronę.
+function otaWaitRestart(){
+  if(otaWaiting)return;otaWaiting=true;
+  setTimeout(()=>{const t=setInterval(async()=>{try{
+    await fetch('/api/ota',{cache:'no-store'});clearInterval(t);location.hash='stan';location.reload();
+  }catch(e){}},2000)},5000);
+}
+$('otaCheck').onclick=async()=>{
+  const r=await (await post('/api/ota/check')).json();
+  if(r.error)alert('Nie da się: '+r.error);
+  otaStatus();
+};
+
 // ---------- Wi-Fi ----------
 
 async function wifiInfo(){try{wifi=await (await fetch('/api/wifi',{cache:'no-store'})).json();renderWifi()}catch(e){}}
@@ -1020,6 +1081,6 @@ $('ledDark').onchange=e=>post('/api/led',{dark:e.target.checked?1:0}).then(statu
   await wifiInfo();
   apMode=!!wifi.ap;
   if(apMode){document.body.classList.add('ap');showTab();renderHero();scan()}
-  else{load().then(status);setInterval(status,3000);setInterval(diag,2000);levels()}
+  else{load().then(status);setInterval(status,3000);setInterval(diag,2000);levels();otaStatus()}
 })();
 </script></body></html>)HTML";

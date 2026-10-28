@@ -28,6 +28,7 @@ Internet radio and other projects for the **Waveshare ESP32-S3-AUDIO-Board** (SK
 - Clap twice to play or stop. The detector subtracts the speaker's own output, because the speaker sits on the same board as the microphones
 - More than 20 LED effects, including a music visualizer and FFT spectrum
 - Two remembered Wi-Fi networks with optional static IP; setup hotspot `Radio-XXXX` at `http://192.168.4.1`
+- Updates over Wi-Fi from GitHub releases (Status tab), including going back to an earlier version
 - Halloween mode: hide the board in a mask, and when someone speaks nearby it plays a scream, with the LEDs glowing like eyes in time with the sound
 - Buttons work like Bluetooth headphones: Key1 / Key3 change the volume, hold them to change the station, Key2 is play/stop
 
@@ -53,12 +54,17 @@ Each [release](https://github.com/sewep/waveshare-s3-audio-radio/releases) has r
 | `radio-full.bin` | Bootloader, partition table and app. Flash it at `0x0` on a new board |
 | `radio-app.bin` | The app alone, for updates (OTA) |
 | `firmware.json` | Version, sizes and SHA-256 of both files |
+| `versions.tsv` | The versions the radio offers for updates: this release and a few earlier ones |
 
 ```bash
 python -m esptool --chip esp32s3 --port COM8 write-flash 0x0 radio-full.bin
 ```
 
 `radio-full.bin` stops before the FFat partition, so flashing it keeps your stations and files. The latest files are always at `https://github.com/sewep/waveshare-s3-audio-radio/releases/latest/download/<file>`.
+
+### Updates over Wi-Fi
+
+The **Aktualizacje** card in the Status tab (Stan) checks the latest release, installs a newer version, or goes back to an earlier one. The list only shows versions that can update themselves, so going back never strands the radio on a version without updates. The radio checks the SHA-256 of the download, writes it to the spare OTA slot and restarts. The new version is kept only after it has been connected to Wi-Fi for 30 seconds; if it restarts before that, the bootloader goes back to the previous version. Version 1.0.0 has no updates over Wi-Fi, so it needs one flash over USB.
 
 To publish a release, push a version tag. A tag with a hyphen, for example `v1.1.0-beta.1`, is marked as a pre-release.
 

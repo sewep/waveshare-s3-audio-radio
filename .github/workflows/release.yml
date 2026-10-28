@@ -8,7 +8,8 @@
 #   radio-app.bin   sam program, do aktualizacji OTA (partycja app0/app1)
 #   radio-full.bin  bootloader + tablica partycji + program, wgrywany od 0x0 na czystą płytkę;
 #                   nie sięga partycji FFat, więc lista stacji i pliki zostają
-#   firmware.json   wersja, rozmiary i sumy SHA-256 — urządzenie czyta go przed pobraniem programu
+#   firmware.json   wersja, wersja mechanizmu OTA (z radio/ota.h), rozmiary i sumy SHA-256
+#   versions.tsv    lista wersji dla radia: ta i kilka poprzednich z OTA (tools/release_index.py)
 #   SHA256SUMS
 name: Wydanie radia
 
@@ -60,12 +61,22 @@ jobs:
           head -c $((0x10000 + APP_SIZE)) build/radio.ino.merged.bin > dist/radio-full.bin
           tail -c "$APP_SIZE" dist/radio-full.bin | cmp - build/radio.ino.bin
 
+          # 0 = wersja bez aktualizacji przez sieć; radio takiej nie zainstaluje
+          OTA=$(sed -n 's/.*constexpr int PROTOCOL = \([0-9][0-9]*\);.*/\1/p' radio/ota.h)
           cd dist
           entry() { printf '{"file":"%s","size":%d,"sha256":"%s"}' "$1" "$(stat -c %s "$1")" "$(sha256sum "$1" | cut -d' ' -f1)"; }
-          printf '{"version":"%s","board":"waveshare-esp32-s3-audio-board","app":%s,"full":%s}\n' \
-            "$VERSION" "$(entry radio-app.bin)" "$(entry radio-full.bin)" > firmware.json
-          sha256sum radio-app.bin radio-full.bin firmware.json > SHA256SUMS
+          printf '{"version":"%s","ota":%d,"board":"waveshare-esp32-s3-audio-board","app":%s,"full":%s}\n' \
+            "$VERSION" "${OTA:-0}" "$(entry radio-app.bin)" "$(entry radio-full.bin)" > firmware.json
           cat firmware.json
+
+      - name: Lista wersji
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 tools/release_index.py --repo "$GITHUB_REPOSITORY" --tag "$GITHUB_REF_NAME" \
+            --manifest dist/firmware.json --out dist/versions.tsv
+          cd dist
+          sha256sum radio-app.bin radio-full.bin firmware.json versions.tsv > SHA256SUMS
           ls -l
 
       - uses: actions/upload-artifact@v4

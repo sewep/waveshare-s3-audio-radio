@@ -40,6 +40,7 @@
 #include "board.h"
 #include "leds.h"
 #include "mics.h"
+#include "ota.h"
 #include "scare.h"
 #include "station_numbers.h"
 #include "version.h"
@@ -613,8 +614,12 @@ void startStation(int index, bool announce) {
   saveState();
 }
 
+// Radio zamilkło na czas aktualizacji (pauseForOta) i wróci, gdy ta się skończy.
+bool otaPaused = false;
+
 void play(int index) {
   alarmDismiss();
+  otaPaused = false;
   for (String* f : {&icyName, &icyDescription, &icyGenre, &icyUrl, &streamHost}) setStreamInfo(*f, "");
   streamLosses = 0;
   playStartMs = 0;
@@ -623,12 +628,32 @@ void play(int index) {
 
 void stop() {
   alarmDismiss();
+  otaPaused = false;
   sleepEndMs = 0;
   playing = false;
   loading = announcing = streamPending = false;
   setTitle("");
   sendAudio(AudioCmd::Stop, "", 0);
   saveState();
+}
+
+// Na czas połączenia z GitHubem radio milknie: drugie połączenie TLS nie mieści się w pamięci
+// obok strumienia https, a zapis flasha i tak przerywałby dźwięk. Stan „gra” zostaje zapisany,
+// więc po restarcie z nową wersją radio gra dalej; po nieudanej próbie wraca od razu.
+bool pauseForOta() {
+  if (!playing) return false;
+  otaPaused = true;
+  playing = false;
+  loading = announcing = streamPending = false;
+  setTitle("");
+  sendAudio(AudioCmd::Stop, "", 0);
+  return true;
+}
+
+void resumeAfterOta() {
+  if (!otaPaused || ota::busy()) return;
+  otaPaused = false;
+  if (!playing) startStation(currentStation, false);
 }
 
 void setVolume(int v) {
@@ -1006,7 +1031,7 @@ void finishScare() {
 }
 
 bool fireScare() {
-  if (!scare::fileSize() || scare::busy() || playing) return false;
+  if (!scare::fileSize() || scare::busy() || ota::busy() || playing) return false;
   Serial.println("Halloween: krzyk!");
   scareState = ScareState::Screaming;
   scareEof = false;
@@ -1195,6 +1220,7 @@ void handleStations() {
 void handlePlay() {
   int i = server.hasArg("i") ? server.arg("i").toInt() : currentStation;
   if (i < 0 || i >= (int)stations.size()) return sendError("zly numer stacji");
+  if (ota::busy()) return sendError("trwa aktualizacja");
   sendOk();  // odpowiedź przed connecttohost, które potrafi chwilę trwać
   play(i);
 }
@@ -1517,6 +1543,19 @@ void sendFavicon() {
   server.send_P(200, "image/svg+xml", FAVICON_SVG);
 }
 
+void handleOtaCheck() {
+  bool waitAudio = pauseForOta();
+  if (!ota::startCheck(waitAudio)) return sendError("trwa sprawdzanie albo aktualizacja");
+  sendOk();
+}
+
+void handleOtaInstall() {
+  String err;
+  bool waitAudio = pauseForOta();
+  if (!ota::startInstall(server.arg("v"), waitAudio, err)) return sendError(err.c_str());
+  sendOk();
+}
+
 void setupRoutes() {
   server.on("/favicon.svg", HTTP_GET, sendFavicon);
   server.on("/favicon.ico", HTTP_GET, sendFavicon);
@@ -1556,6 +1595,9 @@ void setupRoutes() {
     server.on("/api/sleep", HTTP_POST, [] { setSleep(server.arg("min").toInt()); sendOk(); });
     server.on("/api/clap", HTTP_POST, handleClap);
     server.on("/api/history", HTTP_GET, handleHistory);
+    server.on("/api/ota", HTTP_GET, [] { server.send(200, "application/json", ota::statusJson()); });
+    server.on("/api/ota/check", HTTP_POST, handleOtaCheck);
+    server.on("/api/ota/install", HTTP_POST, handleOtaInstall);
     server.on("/api/hw", HTTP_POST, handleScare);
     server.on("/api/hw/download", HTTP_POST, handleScareDownload);
     server.on("/api/hw/upload", HTTP_POST, [] { sendScareResult(uploadResult); }, handleScareUpload);
@@ -1917,6 +1959,7 @@ void setup() {
   titleLock = xSemaphoreCreateMutex();
 
   prefs.begin("radio", false);
+  ota::begin();
   fsReady = FFat.begin(true);
   loadStations();
   currentStation = constrain(prefs.getInt("station", 0), 0, (int)stations.size() - 1);
@@ -2000,6 +2043,8 @@ void loop() {
   tickAlarm();
   tickSleep();
   tickScare();
+  ota::tick(!apMode && WiFi.isConnected());
+  resumeAfterOta();
   updateLeds();
   mainLoopTime.add(micros() - t0);
   vTaskDelay(1);
