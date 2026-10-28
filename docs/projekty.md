@@ -25,3 +25,24 @@ Cel: płytka nasłuchuje, wykrywa szczekanie, a docelowo rozpoznaje konkretnego 
 - **Etap 2 — identyfikacja psa.** Zbiór zamknięty (znane psy: „nasz pies”, „pies sąsiada”, „inny”) jest realny jako dodatkowe klasy w tym samym modelu, jeśli zbierze się po kilkadziesiąt–kilkaset nagrań każdego psa. Dokładniejszy wariant: płytka wykrywa szczekanie i wysyła kilkusekundowy klip na serwer w domu (QNAP), gdzie model embeddingów audio (np. YAMNet/PANNs) + klasyfikator porównuje go z nagraniami wzorcowymi.
 - **Dane.** Najważniejsza część: nagrania z tej samej płytki i tego samego miejsca (te same mikrofony i akustyka). Potrzebny prosty firmware do nagrywania klipów (na PC przez Wi-Fi albo przez USB) i oznaczania ich.
 - **Ryzyka.** Fałszywe alarmy od podobnych dźwięków (TV, inne psy), różne odległości od mikrofonu; rozpoznawanie psa, którego model nigdy nie słyszał, jest znacznie trudniejsze niż wybór spośród znanych.
+
+## 3. Radio: wyszukiwarka stacji z radio-browser.info — działa (2026-10-29)
+
+Sprawdzone na płytce: wyszukiwanie (jazz w PL: 7 stacji, „BBC Radio” na świecie: 36, w tym HLS), rozpoznanie stacji już zapisanych, dodanie i granie w radiu z tytułem. Odsłuch ▶ w przeglądarce nie sprawdzony automatycznie (w panelu bez dźwięku).
+
+Cel: w zakładce Stacje pole wyszukiwania (nazwa, kraj, gatunek), wyniki z kodekiem, bitrate i przyciskiem „Dodaj” (oraz „Posłuchaj” bez zapisu na liście).
+
+- **Bez zmian w firmware na wyszukiwanie.** API wysyła `Access-Control-Allow-Origin: *` (sprawdzone 2026-10-29), więc stronę radia może pytać przeglądarka, a do radia trafia tylko gotowa stacja przez istniejące API dodawania. Strona z `http://radio.local` może wołać API po https.
+- **API:** `https://<serwer>.api.radio-browser.info/json/stations/search?name=…&countrycode=PL&tag=…&hidebroken=true&order=clickcount&reverse=true&limit=30`; listę serwerów daje `all.api.radio-browser.info/json/servers` (lustrzane, losować jeden). Do strumienia brać `url_resolved`. Przy dodaniu stacji wypada wywołać `/json/url/<stationuuid>` (licznik kliknięć, prośba autorów API).
+- **Filtry:** tylko kodeki, które gra ESP32-audioI2S (MP3, AAC/AAC+, także HLS); stacje z bitrate > 320 kb/s pomijać albo oznaczać.
+- **Ograniczenie:** lista stacji to najwyżej 99 pozycji; przy pełnej liście komunikat zamiast cichej odmowy.
+
+## 4. Radio: komendy głosowe bez chmury (ESP-SR)
+
+Cel: „Hi ESP” + komenda („next station”, „volume up”, „stop”) działające także w trakcie grania.
+
+- **Co daje rdzeń esp32 3.3.12** (sprawdzone w `libraries/ESP_SR` i `esp32s3-libs/3.3.12/sdkconfig`): słowo wybudzające wkompilowane na sztywno — tylko `wn9_hiesp` („Hi ESP”), komendy po angielsku (MultiNet7 quant) podawane jako tekst. Inne słowo albo język wymagają przebudowania bibliotek rdzenia (esp32-arduino-lib-builder). Polskie komendy zapisane fonetycznie po angielsku — do sprawdzenia, raczej zawodne.
+- **Dźwięk wejściowy:** ESP-SR chce 16 kHz, 16 bit; mikrofony czyta teraz I2S1 jako slave przy 48 kHz, 32 bit (zegar z biblioteki audio). Zamiast `ESP_SR.begin(i2s…)` użyć niższego `sr_start()` z `esp32-hal-sr.h` z własnym `fill_cb`: decymacja 48→16 kHz z `mics.cpp`, układ kanałów np. `"MMR"` (input_format: M = mikrofon, R = odniesienie z głośnika, N = nieużywany).
+- **Usuwanie echa (AEC):** bez niego muzyka zagłuszy komendy (głośnik daje w mikrofonach do −2 dBFS przy głośności 14). Odniesienie najlepiej z MIC3 (na tej płytce pętla z głośnika, tak robi xiaozhi) — wymaga przejścia ES7210 i I2S1 na TDM z 3–4 kanałami. Zastępczo próbki wyjścia z `audio_process_i2s()`, ale opóźnienie DMA (~85 ms) musi być stałe.
+- **Partycje:** ESP-SR czyta modele z partycji `model` (`srmodels.bin`). Schemat rdzenia `esp_sr_16` ma te same sloty aplikacji co obecny `app3M_fat9M_16MB` (0x10000 i 0x310000 po 3 MB), a FAT dzieli na 6 MB danych + 3,9 MB modeli od 0xC10000. Zmiany tablicy partycji nie da się zrobić przez OTA: jednorazowe wgranie przez USB, sformatowanie FFat od nowa (najpierw eksport listy stacji). Aplikacja powinna sprawdzać obecność partycji `model` w czasie pracy, żeby ten sam program działał też na płytkach ze starym układem (bez komend głosowych) i dalej aktualizował się przez OTA. Sprawdzić, czy `arduino-cli --profile` z własnym `partitions.csv` wygeneruje i wgra `srmodels.bin` (w `boards.txt` robi to tylko schemat `esp_sr_16`), oraz czy `radio-full.bin` w Actions ma zawierać modele.
+- **Ryzyka:** obciążenie CPU (AFE + WakeNet na rdzeniu 0 obok Wi-Fi, dekodowanie na rdzeniu 1 — mierzyć przerwy w `/api/diag`), PSRAM (modele i bufory AFE) obok 640 KB bufora strumienia; konflikt z klaskaniem i trybem Halloween (wspólne mikrofony).

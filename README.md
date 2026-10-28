@@ -21,6 +21,7 @@ Internet radio and other projects for the **Waveshare ESP32-S3-AUDIO-Board** (SK
 ## Radio features
 
 - MP3, AAC and HLS streams (BBC, Polskie Radio), up to 99 stations with favourites, 36 preset stations
+- Station search in the [radio-browser.info](https://www.radio-browser.info/) directory (name, country, genre), with a preview in the browser and one-click adding
 - Web interface at `http://radio.local`: playback, station list, alarm, lights, Wi-Fi, status and Halloween tabs
 - Spoken station number (1–40) when switching, synthesized offline and built into the firmware
 - Alarm clock with NTP time, weekday schedule, LED sunrise, rising volume and a beep fallback when the stream fails

@@ -291,12 +291,24 @@ body.ap nav,body.ap .sta{display:none}
     <p class="muted">Nagrania liczebników od 1 do 40 są zapisane w radiu i działają bez internetu. Stacje od 41. (lista mieści 99) grają bez zapowiedzi.</p>
   </div>
   <div class="card">
+    <form id="find">
+      <h2>Szukaj stacji</h2>
+      <input type="text" id="fName" placeholder="Nazwa, np. Trójka, BBC, Jazz" maxlength="60" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <div class="field" style="margin:0"><span>Kraj</span><select id="fCountry"></select></div>
+      <div class="field" style="margin:0"><span>Gatunek</span><select id="fTag"></select></div>
+      <button class="primary">Szukaj</button>
+    </form>
+    <p class="muted" id="fInfo"></p>
+    <ul id="found"></ul>
+    <p class="muted">Katalog <a href="https://www.radio-browser.info/" target="_blank" rel="noopener">radio-browser.info</a>, od najczęściej słuchanych. Przycisk ▶ puszcza stację w tym telefonie albo komputerze, nie w radiu; „Dodaj” dopisuje ją na koniec listy stacji radia.</p>
+  </div>
+  <div class="card">
     <form id="add">
       <h2>Dodaj stację</h2>
       <input type="text" name="name" placeholder="Nazwa, np. Radio Kraków" required maxlength="40">
       <input type="url" name="url" placeholder="Adres strumienia, np. https://…/stream.mp3" required>
       <button class="primary">Dodaj</button>
-      <p class="muted">Radio odtwarza strumienie MP3, AAC, FLAC, Opus i Vorbis po http lub https. Adresy stacji znajdziesz np. na radio-browser.info (pole „URL”) albo w playlistach <code>.m3u</code> / <code>.pls</code> ze stron rozgłośni.</p>
+      <p class="muted">Radio odtwarza strumienie MP3, AAC, FLAC, Opus i Vorbis po http lub https. Adresy stacji spoza wyszukiwarki znajdziesz w playlistach <code>.m3u</code> / <code>.pls</code> ze stron rozgłośni.</p>
     </form>
   </div>
   <div class="card">
@@ -512,6 +524,7 @@ body.ap nav,body.ap .sta{display:none}
       <li>Kliknij stację na liście, żeby jej słuchać. Radio pamięta ostatnią stację i głośność, a po włączeniu zasilania samo zaczyna grać.</li>
       <li>Przy starcie i każdej zmianie stacji radio mówi jej numer z listy, więc przełączając przyciskami wiesz, gdzie jesteś. Zapowiedź wyłączysz w zakładce Stacje.</li>
       <li>Strona działa na każdym urządzeniu w tej samej sieci pod adresem <code>http://radio.local</code>. Jeśli adres się nie otwiera, użyj numeru IP z zakładki Stan albo rozłącz VPN.</li>
+      <li>Nowe stacje znajdziesz wyszukiwarką w zakładce Stacje (katalog radio-browser.info, po nazwie, kraju i gatunku).</li>
       <li>Gwiazdką w zakładce Stacje oznaczysz ulubione. Mają przyciski w zakładce Radio, a na płytce przełącza je podwójne kliknięcie Key2.</li>
       <li>Wyłącznik czasowy ustawisz w zakładce Radio albo przyciskami Key1 + Key3. W ostatniej minucie muzyka powoli cichnie.</li>
       <li>Gdy strumień się urwie, radio po kilku sekundach samo połączy się ponownie.</li>
@@ -641,7 +654,7 @@ const narrow=matchMedia('(max-width:480px)');
 const fitHero=()=>$('heroSvg').setAttribute('viewBox',narrow.matches?'128 0 352 172':'0 0 560 172');
 narrow.onchange=fitHero;fitHero();
 
-async function load(){stations=await (await fetch('/api/stations')).json();render()}
+async function load(){stations=await (await fetch('/api/stations')).json();render();renderFound()}
 async function status(){try{st=await (await fetch('/api/status')).json();render()}catch(e){}}
 const play=i=>post('/api/play',{i}).then(status);
 const signal=r=>r>-55?4:r>-67?3:r>-75?2:1;
@@ -1061,6 +1074,72 @@ $('vol').oninput=e=>$('volv').textContent=e.target.value;
 $('vol').onchange=e=>post('/api/volume',{v:e.target.value}).then(status);
 $('add').onsubmit=e=>{e.preventDefault();post('/api/stations/add',new FormData(e.target)).then(r=>r.json()).then(r=>{
   if(r.error){alert('Nie dodano: '+r.error);return}e.target.reset();load()})};
+
+// Wyszukiwarka stacji: przeglądarka pyta katalog radio-browser.info wprost (API pozwala na zapytania
+// z innych stron), a do radia trafia tylko wybrana stacja przez /api/stations/add.
+const RB_HOSTS=['de1','de2'];let rbHost=0,found=[],preview=null,previewUrl='';
+async function rb(path){
+  for(let k=0;k<RB_HOSTS.length;k++){
+    const h=RB_HOSTS[(rbHost+k)%RB_HOSTS.length],c=new AbortController(),t=setTimeout(()=>c.abort(),8000);
+    try{const r=await fetch(`https://${h}.api.radio-browser.info/json/${path}`,{signal:c.signal});
+      if(r.ok){rbHost=(rbHost+k)%RB_HOSTS.length;return r.json()}}catch(e){}finally{clearTimeout(t)}
+  }
+  throw new Error('radio-browser');
+}
+function stopPreview(){if(preview){preview.pause();preview.src=''}preview=null;previewUrl='';renderFound()}
+function renderFound(){
+  const ul=$('found');ul.innerHTML='';
+  found.forEach(s=>{
+    const li=document.createElement('li');
+    const u=document.createElement('div');u.className='url';u.textContent=s.name;
+    const codec=s.codec==='UNKNOWN'?(s.hls?'HLS':''):s.codec;
+    const sm=document.createElement('small');
+    sm.textContent=[s.countrycode,[codec,s.bitrate?s.bitrate+' kb/s':''].filter(Boolean).join(' '),s.tags.split(',').slice(0,3).join(', ')].filter(Boolean).join(' · ');
+    u.append(sm);li.append(u);
+    if(!s.hls){  // HLS większość przeglądarek gra tylko przez dodatkowy skrypt, a radio i tak sobie z nim radzi
+      const p=document.createElement('button');p.className='small';p.textContent=previewUrl===s.url?'■':'▶';
+      p.title=previewUrl===s.url?'Zatrzymaj odsłuch':'Posłuchaj w tym urządzeniu';
+      p.onclick=()=>{if(previewUrl===s.url)return stopPreview();stopPreview();
+        preview=new Audio(s.url);previewUrl=s.url;preview.onerror=()=>{if(previewUrl===s.url){stopPreview();alert('Przeglądarka nie odtworzy tej stacji. Radio może sobie z nią poradzić: dodaj ją i spróbuj.')}};
+        preview.play().catch(()=>{});renderFound()};
+      li.append(p);
+    }
+    const i=stations.findIndex(x=>x.url===s.url||x.url===s.rawUrl);
+    if(i>=0){const b=document.createElement('button');b.className='small';b.textContent=`nr ${i+1} ▶`;b.title='Graj w radiu';
+      b.onclick=()=>{stopPreview();play(i)};li.append(b)}
+    else{const b=document.createElement('button');b.className='small primary';b.textContent='Dodaj';b.onclick=()=>addFound(s,b);li.append(b)}
+    ul.append(li);
+  });
+}
+async function addFound(s,b){
+  if(stations.length>=99){alert('Lista ma już 99 stacji. Usuń którąś, żeby dodać nową.');return}
+  b.disabled=true;
+  const r=await (await post('/api/stations/add',{name:s.name.slice(0,40),url:s.url})).json().catch(()=>({error:'brak odpowiedzi radia'}));
+  if(r.error){b.disabled=false;alert('Nie dodano: '+r.error);return}
+  rb('url/'+s.uuid).catch(()=>{});  // licznik kliknięć katalogu, o który proszą jego autorzy
+  load();
+}
+[['','wszystkie'],['PL','Polska'],['GB','Wielka Brytania'],['DE','Niemcy'],['US','USA'],['FR','Francja'],['IT','Włochy'],['ES','Hiszpania'],
+ ['NL','Holandia'],['AT','Austria'],['CH','Szwajcaria'],['CZ','Czechy'],['SK','Słowacja'],['UA','Ukraina']].forEach(([v,l])=>$('fCountry').add(new Option(l,v)));
+[['','dowolny'],['pop','pop'],['rock','rock'],['dance','dance'],['electronic','elektroniczna'],['house','house'],['jazz','jazz'],['classical','klasyczna'],
+ ['chillout','chillout'],['80s','lata 80.'],['90s','lata 90.'],['metal','metal'],['hip hop','hip-hop'],['news','wiadomości'],['talk','rozmowy'],
+ ['christmas','świąteczna']].forEach(([v,l])=>$('fTag').add(new Option(l,v)));
+$('find').onsubmit=async e=>{
+  e.preventDefault();
+  const p=new URLSearchParams({hidebroken:'true',order:'clickcount',reverse:'true',limit:'40'});
+  const name=$('fName').value.trim(),cc=$('fCountry').value,tag=$('fTag').value;
+  if(name)p.set('name',name);if(cc)p.set('countrycode',cc);if(tag)p.set('tag',tag);
+  stopPreview();found=[];renderFound();$('fInfo').textContent='Szukam…';
+  try{
+    const seen=new Set();
+    found=(await rb('stations/search?'+p)).filter(s=>/^https?:\/\//.test(s.url_resolved)&&!/H\.264|VP[89]|WMA/i.test(s.codec))
+      .map(s=>({name:s.name.replace(/\s+/g,' ').trim(),url:s.url_resolved,rawUrl:s.url,uuid:s.stationuuid,countrycode:s.countrycode,
+        codec:s.codec,bitrate:s.bitrate,hls:!!s.hls,tags:s.tags||''}))
+      .filter(s=>s.name&&!seen.has(s.url)&&seen.add(s.url));
+    $('fInfo').textContent=found.length?`Znalezione stacje: ${found.length}${found.length>=35?' (najczęściej słuchane)':''}.`:'Nic nie znaleziono. Spróbuj krótszej nazwy, innego kraju albo gatunku.';
+  }catch(err){$('fInfo').textContent='Brak połączenia z katalogiem radio-browser.info. Sprawdź internet w tym urządzeniu.'}
+  renderFound();
+};
 [[15,'15 min'],[30,'30 min'],[60,'1 h'],[90,'1,5 h'],[0,'Nie wyłączaj']].forEach(([v,l])=>{
   const b=document.createElement('button');b.dataset.min=v;b.textContent=l;b.onclick=()=>post('/api/sleep',{min:v}).then(status);$('sleepChips').append(b)});
 ['toneB','toneM','toneT'].forEach(id=>{
