@@ -6,7 +6,7 @@ Pełny zrzut 16 MB z płytki Waveshare ESP32-S3-AUDIO-Board (SKU 32184), wykonan
 |---|---|
 | `factory-xiaozhi-2.4.2-full16MB.bin` | cały flash od `0x0` do `0x1000000` (poza gitem, patrz `.gitignore`) |
 | `SHA256SUMS` | suma kontrolna pliku `.bin` |
-| `efuse-summary.txt` | stan eFuse w chwili zrzutu (tylko do wglądu) |
+| `efuse-summary.txt` | stan eFuse w chwili zrzutu, tylko do wglądu (poza gitem: zawiera MAC i unikalny identyfikator płytki) |
 | `restore-factory.ps1` | skrypt przywracający |
 
 Zrzut sprawdzony `esptool verify-flash` — zgodny z chipem. Flash encryption i secure boot są wyłączone, więc obraz wgrywa się 1:1. NVS w kopii nie zawiera danych Wi-Fi (urządzenie nie było jeszcze skonfigurowane).

@@ -1,6 +1,9 @@
 # Obrazy flasha — duże i mogą zawierać dane Wi-Fi z NVS
 *.bin
 
+# Stan eFuse — zawiera MAC i unikalny identyfikator płytki
+backup/efuse-summary.txt
+
 # Arduino / PlatformIO / ESP-IDF
 build/
 .pio/
