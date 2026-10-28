@@ -1,0 +1,83 @@
+# Buduje firmware radia i publikuje go jako wydanie na GitHubie.
+#
+# Wydanie: wypchnij tag, np. `git tag v1.2.0 && git push origin v1.2.0`. Tag z myślnikiem
+# (v1.2.0-beta.1) daje wydanie testowe (prerelease), którego OTA nie bierze jako „najnowszego”.
+# Ręczne uruchomienie (Run workflow) tylko buduje i zostawia pliki jako artefakt przebiegu.
+#
+# Pliki wydania (stałe nazwy, więc działa adres releases/latest/download/<plik>):
+#   radio-app.bin   sam program, do aktualizacji OTA (partycja app0/app1)
+#   radio-full.bin  bootloader + tablica partycji + program, wgrywany od 0x0 na czystą płytkę;
+#                   nie sięga partycji FFat, więc lista stacji i pliki zostają
+#   firmware.json   wersja, rozmiary i sumy SHA-256 — urządzenie czyta go przed pobraniem programu
+#   SHA256SUMS
+name: Wydanie radia
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Wersja
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="0.0.0-dev+${GITHUB_SHA::7}"
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          printf '#pragma once\n\n// Wygenerowane przez GitHub Actions.\n#define FW_VERSION "%s"\n' "$VERSION" > radio/version.h
+          cat radio/version.h
+
+      - uses: arduino/setup-arduino-cli@v2
+
+      # Rdzeń esp32 i biblioteki z profilu w radio/sketch.yaml (ok. 1 GB) — bez pamięci podręcznej
+      # każde budowanie pobierałoby je od nowa.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.arduino15
+          key: arduino15-${{ runner.os }}-${{ hashFiles('radio/sketch.yaml') }}
+
+      - name: Kompilacja
+        run: arduino-cli compile --profile audio-board --output-dir build radio
+
+      - name: Pliki wydania
+        run: |
+          mkdir dist
+          cp build/radio.ino.bin dist/radio-app.bin
+          # radio.ino.merged.bin z rdzenia jest dopełniony do 16 MB pustym FFat — wgranie go
+          # skasowałoby listę stacji. Program zaczyna się w nim od 0x10000, więc wystarczy uciąć
+          # obraz tuż za programem.
+          APP_SIZE=$(stat -c %s build/radio.ino.bin)
+          head -c $((0x10000 + APP_SIZE)) build/radio.ino.merged.bin > dist/radio-full.bin
+          tail -c "$APP_SIZE" dist/radio-full.bin | cmp - build/radio.ino.bin
+
+          cd dist
+          entry() { printf '{"file":"%s","size":%d,"sha256":"%s"}' "$1" "$(stat -c %s "$1")" "$(sha256sum "$1" | cut -d' ' -f1)"; }
+          printf '{"version":"%s","board":"waveshare-esp32-s3-audio-board","app":%s,"full":%s}\n' \
+            "$VERSION" "$(entry radio-app.bin)" "$(entry radio-full.bin)" > firmware.json
+          sha256sum radio-app.bin radio-full.bin firmware.json > SHA256SUMS
+          cat firmware.json
+          ls -l
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: radio-${{ env.VERSION }}
+          path: dist/
+
+      - name: Wydanie na GitHubie
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PRE=""
+          case "$VERSION" in *-*) PRE="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* --title "Radio $VERSION" --generate-notes $PRE

@@ -42,7 +42,30 @@ arduino-cli upload --profile audio-board radio --port COM8
 
 Replace `COM8` with your port. On the first start the radio opens the `Radio-XXXX` hotspot. Connect to it, pick your network, and the radio is then at `http://radio.local`.
 
-The partition scheme is `app3M_fat9M_16MB`. The FFat partition holds the station list, the spoken numbers and the Halloween sound.
+The partition scheme is `app3M_fat9M_16MB`: two 3 MB app slots for OTA updates and a 9 MB FFat partition. The FFat partition holds the station list, the spoken numbers and the Halloween sound.
+
+### Prebuilt firmware
+
+Each [release](https://github.com/sewep/waveshare-s3-audio-radio/releases) has ready-to-flash files built by GitHub Actions:
+
+| File | What it is |
+|---|---|
+| `radio-full.bin` | Bootloader, partition table and app. Flash it at `0x0` on a new board |
+| `radio-app.bin` | The app alone, for updates (OTA) |
+| `firmware.json` | Version, sizes and SHA-256 of both files |
+
+```bash
+python -m esptool --chip esp32s3 --port COM8 write-flash 0x0 radio-full.bin
+```
+
+`radio-full.bin` stops before the FFat partition, so flashing it keeps your stations and files. The latest files are always at `https://github.com/sewep/waveshare-s3-audio-radio/releases/latest/download/<file>`.
+
+To publish a release, push a version tag. A tag with a hyphen, for example `v1.1.0-beta.1`, is marked as a pre-release.
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
 
 ## Building xiaozhi in Polish
 

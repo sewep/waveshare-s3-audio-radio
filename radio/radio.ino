@@ -42,6 +42,7 @@
 #include "mics.h"
 #include "scare.h"
 #include "station_numbers.h"
+#include "version.h"
 #include "web_page.h"
 
 static const char* HOSTNAME = "radio";
@@ -1481,7 +1482,7 @@ void handleDiag() {
           jsonField("heapMin", ESP.getMinFreeHeap()) + jsonField("psram", ESP.getFreePsram()) +
           jsonField("psramSize", ESP.getPsramSize()) + jsonField("cpu", ESP.getCpuFreqMHz()) +
           jsonField("flash", ESP.getFlashChipSize()) + jsonField("fs", fsReady ? (long)FFat.usedBytes() : -1L) +
-          jsonField("fsSize", fsReady ? (long)FFat.totalBytes() : -1L) + jsonField("core", ESP_ARDUINO_VERSION_STR) +
+          jsonField("fsSize", fsReady ? (long)FFat.totalBytes() : -1L) + jsonField("core", ESP_ARDUINO_VERSION_STR) + jsonField("fw", FW_VERSION) +
           jsonField("sdk", ESP.getSdkVersion()) + jsonField("build", __DATE__ " " __TIME__) +
           jsonField("audioGap", audioGap.value()) + jsonField("audioLoop", audioLoopTime.value()) +
           jsonField("mainLoop", mainLoopTime.value()) + jsonField("web", webTime.value()) +
@@ -1911,7 +1912,7 @@ void setup() {
   // wstrzymywało zadanie audio (strumień nie ruszał). Bez czekania nadmiar logów przepada.
   Serial.setTxTimeoutMs(0);
   delay(300);
-  Serial.println("\n=== Radio internetowe ===");
+  Serial.println("\n=== Radio internetowe " FW_VERSION " ===");
   pinMode(board::BOOT_BUTTON, INPUT_PULLUP);
   titleLock = xSemaphoreCreateMutex();
 

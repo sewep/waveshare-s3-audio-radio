@@ -982,7 +982,7 @@ async function diag(){
   tableRows('dSys',[['Czas pracy',dur(Y.uptime)],['Ostatni restart',Y.reset],['Temperatura układu',`${Y.temp.toFixed(0)} °C`],
     ['RAM wolny',`${kb(Y.heap)} (najmniej ${kb(Y.heapMin)})`],['PSRAM wolny',`${kb(Y.psram)} z ${kb(Y.psramSize)}`],
     ['FFat',Y.fs>=0?`${kb(Y.fs)} z ${kb(Y.fsSize)}`:'niezamontowany'],['Bateria',st.battery>=0?`${st.battery}%`:'pomiar niepodłączony'],
-    ['Procesor',`ESP32-S3, ${Y.cpu} MHz, flash ${kb(Y.flash)}`],['Oprogramowanie',`Arduino ${Y.core}, ESP-IDF ${Y.sdk}`],['Zbudowano',Y.build]]);
+    ['Procesor',`ESP32-S3, ${Y.cpu} MHz, flash ${kb(Y.flash)}`],['Wersja radia',Y.fw],['Oprogramowanie',`Arduino ${Y.core}, ESP-IDF ${Y.sdk}`],['Zbudowano',Y.build]]);
 }
 
 // ---------- sterowanie ----------
